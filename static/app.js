@@ -43,6 +43,23 @@ const BOARD_CARD_MIN_WIDTH = 220;
 const BOARD_CARD_MIN_HEIGHT = 130;
 const GRAPH_WIDTH = 1100;
 const GRAPH_HEIGHT = 640;
+const STATIC_DEMO_STORAGE_KEY = "veerhau_companion_pages_demo_v1";
+const STATIC_DEMO_PASSWORD = "veerhau";
+const ENTITY_PREFIXES = {
+  campaigns: "cmp",
+  coteries: "cot",
+  characters: "chr",
+  factions: "fac",
+  locations: "loc",
+  events: "evt",
+  facts: "fact",
+  clues: "clue",
+  storylines: "story",
+  theories: "theory",
+  notes: "note",
+  memoirs: "memoir",
+  investigationBoards: "board",
+};
 
 const OPTIONS = {
   characterType: ["Игровой персонаж", "NPC"],
@@ -388,7 +405,217 @@ function emptyData() {
   return Object.fromEntries(ENTITY_KEYS.map((key) => [key, []]));
 }
 
+function staticDemoEnabled() {
+  return Boolean(window.CHRONICLE_STATIC_DEMO);
+}
+
+function staticDemoInitialStore() {
+  const now = new Date().toISOString();
+  const data = emptyData();
+  data.campaigns.push({
+    id: "cmp_main",
+    title: "Veerhau's Companion",
+    description: "Демо-хроника для World of Darkness / Vampire: The Masquerade.",
+    setting: "World of Darkness",
+    createdAt: now,
+    updatedAt: now,
+  });
+  data.coteries.push({
+    id: "cot_main",
+    name: "Котерия",
+    description: "Игровые персонажи хроники.",
+    memberIds: ["chr_julia", "chr_dietrich", "chr_ray", "chr_garrett"],
+    notes: "",
+    createdAt: now,
+    updatedAt: now,
+  });
+  [
+    ["chr_julia", "Джулия"],
+    ["chr_dietrich", "Дитрих"],
+    ["chr_ray", "Рей"],
+    ["chr_garrett", "Гаррет"],
+  ].forEach(([id, name]) => {
+    data.characters.push({
+      id,
+      name,
+      characterType: "Игровой персонаж",
+      type: "Игровой персонаж",
+      species: "Не известно",
+      status: "Активен",
+      factionId: "",
+      coterieId: "cot_main",
+      description: "",
+      notes: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+  data.storylines.push({
+    id: "story_demo",
+    title: "Первое дело",
+    description: "Демо-сюжетная линия для проверки доски расследования.",
+    status: "Активна",
+    openQuestions: "Кто оставил следы? Почему свидетели молчат?",
+    notes: "",
+    createdAt: now,
+    updatedAt: now,
+  });
+  data.investigationBoards.push({
+    id: "board_main",
+    name: "Основная доска",
+    description: "Демо-доска расследования для GitHub Pages.",
+    status: "Активна",
+    storylineId: "story_demo",
+    items: [
+      { entity: "coteries", id: "cot_main", x: 120, y: 120, width: 280, height: 170 },
+      { entity: "storylines", id: "story_demo", x: 480, y: 160, width: 300, height: 180 },
+    ],
+    groups: [],
+    viewport: { x: 0, y: 0, zoom: 1 },
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { auth: false, data, relationships: [] };
+}
+
+function staticDemoReadStore() {
+  try {
+    const raw = localStorage.getItem(STATIC_DEMO_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        auth: Boolean(parsed.auth),
+        data: { ...emptyData(), ...(parsed.data || {}) },
+        relationships: Array.isArray(parsed.relationships) ? parsed.relationships : [],
+      };
+    }
+  } catch {
+    // Fall through to a fresh demo store if browser storage is unavailable or corrupted.
+  }
+  const fresh = staticDemoInitialStore();
+  staticDemoWriteStore(fresh);
+  return fresh;
+}
+
+function staticDemoWriteStore(store) {
+  localStorage.setItem(STATIC_DEMO_STORAGE_KEY, JSON.stringify(store));
+}
+
+function staticDemoPayload(options) {
+  if (!options.body) return {};
+  try {
+    return JSON.parse(options.body);
+  } catch {
+    return {};
+  }
+}
+
+function staticDemoRecordId(entity) {
+  const prefix = ENTITY_PREFIXES[entity] || "rec";
+  if (window.crypto?.randomUUID) return `${prefix}_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function staticDemoRelationshipBetween(relationships, sourceType, sourceId, targetType, targetId) {
+  return relationships.find((rel) =>
+    (rel.sourceType === sourceType && rel.sourceId === sourceId && rel.targetType === targetType && rel.targetId === targetId) ||
+    (rel.sourceType === targetType && rel.sourceId === targetId && rel.targetType === sourceType && rel.targetId === sourceId)
+  );
+}
+
+async function staticDemoApi(path, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  const store = staticDemoReadStore();
+  const payload = staticDemoPayload(options);
+  const parts = String(path).split("?")[0].split("/").filter(Boolean);
+  if (path === "/api/session") return { authenticated: store.auth };
+  if (path === "/api/login" && method === "POST") {
+    if (String(payload.password || "") !== STATIC_DEMO_PASSWORD) throw new Error("Неверный пароль для демо.");
+    store.auth = true;
+    staticDemoWriteStore(store);
+    return { ok: true };
+  }
+  if (path === "/api/logout" && method === "POST") {
+    store.auth = false;
+    staticDemoWriteStore(store);
+    return { ok: true };
+  }
+  if (!store.auth) throw new Error("Введите пароль демо: veerhau");
+  if (path === "/api/bootstrap" && method === "GET") {
+    return { ...store.data, relationships: store.relationships };
+  }
+  const resource = parts[1] || "";
+  const id = decodeURIComponent(parts[2] || "");
+  const now = new Date().toISOString();
+  if (resource === "relationships") {
+    if (method === "POST") {
+      const existing = staticDemoRelationshipBetween(
+        store.relationships,
+        payload.sourceType,
+        payload.sourceId,
+        payload.targetType,
+        payload.targetId
+      );
+      const record = existing || {
+        id: staticDemoRecordId("relationships"),
+        createdAt: now,
+      };
+      Object.assign(record, {
+        sourceType: payload.sourceType || record.sourceType || "",
+        sourceId: payload.sourceId || record.sourceId || "",
+        targetType: payload.targetType || record.targetType || "",
+        targetId: payload.targetId || record.targetId || "",
+        relationLabel: payload.relationLabel || record.relationLabel || "связано",
+        notes: payload.notes || "",
+        edgeColor: payload.edgeColor || "",
+        arrowDirection: payload.arrowDirection || "",
+        updatedAt: now,
+      });
+      if (!existing) store.relationships.push(record);
+      staticDemoWriteStore(store);
+      return record;
+    }
+    const index = store.relationships.findIndex((item) => item.id === id);
+    if (index === -1) throw new Error("Связь не найдена.");
+    if (method === "PUT") {
+      store.relationships[index] = { ...store.relationships[index], ...payload, updatedAt: now };
+      staticDemoWriteStore(store);
+      return store.relationships[index];
+    }
+    if (method === "DELETE") {
+      store.relationships.splice(index, 1);
+      staticDemoWriteStore(store);
+      return { ok: true };
+    }
+  }
+  if (!ENTITY_KEYS.includes(resource)) throw new Error("Неизвестный ресурс демо.");
+  store.data[resource] = store.data[resource] || [];
+  if (method === "POST") {
+    const record = { ...payload, id: staticDemoRecordId(resource), createdAt: now, updatedAt: now };
+    store.data[resource].push(record);
+    staticDemoWriteStore(store);
+    return record;
+  }
+  const index = store.data[resource].findIndex((item) => item.id === id);
+  if (index === -1) throw new Error("Объект не найден.");
+  if (method === "PUT") {
+    store.data[resource][index] = { ...store.data[resource][index], ...payload, id, updatedAt: now };
+    staticDemoWriteStore(store);
+    return store.data[resource][index];
+  }
+  if (method === "DELETE") {
+    store.data[resource].splice(index, 1);
+    store.relationships = store.relationships.filter((rel) =>
+      !((rel.sourceType === resource && rel.sourceId === id) || (rel.targetType === resource && rel.targetId === id))
+    );
+    staticDemoWriteStore(store);
+    return { ok: true };
+  }
+  throw new Error("Метод демо не поддерживается.");
+}
+
 async function api(path, options = {}) {
+  if (staticDemoEnabled()) return staticDemoApi(path, options);
   const response = await fetch(path, {
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
