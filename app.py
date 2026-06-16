@@ -17,11 +17,12 @@ import sys
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.environ.get("CHRONICLE_DATA_DIR", str(ROOT / "data")))
 DB_PATH = DATA_DIR / "chronicle.db"
 
 APP_PASSWORD = os.environ.get("CHRONICLE_PASSWORD", "veerhau")
 SESSION_DAYS = int(os.environ.get("CHRONICLE_SESSION_DAYS", "30"))
+HOST = os.environ.get("HOST", os.environ.get("CHRONICLE_HOST", "127.0.0.1"))
 PORT = int(os.environ.get("PORT", os.environ.get("CHRONICLE_PORT", "8787")))
 
 ENTITIES = {
@@ -906,8 +907,9 @@ class ChronicleHandler(BaseHTTPRequestHandler):
 
 def run() -> None:
     init_db()
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), ChronicleHandler)
-    print(f"Veerhau's Companion: http://127.0.0.1:{PORT}")
+    server = ThreadingHTTPServer((HOST, PORT), ChronicleHandler)
+    shown_host = "127.0.0.1" if HOST in {"0.0.0.0", "::"} else HOST
+    print(f"Veerhau's Companion: http://{shown_host}:{PORT}")
     print("Пароль по умолчанию: veerhau")
     server.serve_forever()
 

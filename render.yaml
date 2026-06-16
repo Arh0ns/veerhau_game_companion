@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: veerhau-companion
+    runtime: python
+    plan: starter
+    buildCommand: python -m py_compile app.py
+    startCommand: python app.py
+    healthCheckPath: /api/session
+    envVars:
+      - key: CHRONICLE_PASSWORD
+        sync: false
+      - key: CHRONICLE_DATA_DIR
+        value: /var/data
+      - key: CHRONICLE_HOST
+        value: 0.0.0.0
+      - key: CHRONICLE_SESSION_DAYS
+        value: 30
+    disk:
+      name: chronicle-data
+      mountPath: /var/data
+      sizeGB: 1
