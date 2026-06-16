@@ -44,7 +44,7 @@ const BOARD_CARD_MIN_HEIGHT = 130;
 const GRAPH_WIDTH = 1100;
 const GRAPH_HEIGHT = 640;
 const STATIC_DEMO_STORAGE_KEY = "veerhau_companion_pages_demo_v1";
-const STATIC_DEMO_PASSWORD = "veerhau";
+const STATIC_DEMO_PASSWORD = "ditrih_is_cool";
 const ENTITY_PREFIXES = {
   campaigns: "cmp",
   coteries: "cot",
