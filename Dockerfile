@@ -1,0 +1,18 @@
+FROM python:3.13-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV CHRONICLE_HOST=0.0.0.0
+ENV CHRONICLE_PORT=8787
+ENV CHRONICLE_DATA_DIR=/data
+
+WORKDIR /app
+
+COPY app.py ./
+COPY static ./static
+
+RUN mkdir -p /data
+
+EXPOSE 8787
+
+CMD ["python", "app.py"]
