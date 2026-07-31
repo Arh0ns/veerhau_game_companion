@@ -13,7 +13,7 @@ function Process-Alive {
 
 function Test-AppReady {
   try {
-    Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8787/api/session" -TimeoutSec 2 | Out-Null
+    Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8787/api/v1/session" -TimeoutSec 2 | Out-Null
     return $true
   } catch {
     return $false

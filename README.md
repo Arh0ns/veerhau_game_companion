@@ -1,130 +1,135 @@
 # Veerhau's Companion
 
-Локальный MVP для ведения хроники настольной ролевой кампании в gothic/noir-стиле.
+Веб-приложение для структурированной хроники World of Darkness: сущности, универсальные связи, доски расследования, таймлайн, поиск и граф. Данные хранятся на сервере в SQLite, браузер хранит только cookie сессии.
 
-Приложение работает как Python-сервер с общей SQLite-базой. Браузер хранит только cookie сессии, а данные хроники лежат в `data/chronicle.db`.
+## Стек
 
-## Текущая Схема
+- backend: Python 3.14, FastAPI, Pydantic, SQLite;
+- frontend: TypeScript, Vite, нативный DOM и SVG;
+- публичный доступ: бесплатный SSH-туннель Serveo;
+- авторизация: один общий пароль из `.env`.
 
-Сайт запускается на этом компьютере и открывается наружу через SSH-туннель Serveo:
-
-```text
-этот компьютер -> app.py -> http://127.0.0.1:8787 -> Serveo -> публичная HTTPS-ссылка
-```
-
-GitHub Pages можно использовать только как статическую демку интерфейса. В ней данные сохраняются в `localStorage` конкретного браузера, а не в общей базе.
-
-Полноценная версия с общей базой запускается через локальный Python-сервер и Serveo.
+GitHub Pages больше не используется: статический хостинг не может предоставить общую SQLite-базу и серверную авторизацию.
 
 ## Запуск
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\start_public_site.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start_public_site.ps1
 ```
 
-Скрипт запускает локальное приложение, поднимает публичный туннель и печатает:
+Скрипт:
 
-- публичную ссылку;
-- локальную ссылку;
-- пароль сайта.
+1. создаёт `.venv`, если его ещё нет;
+2. устанавливает недостающие Python- и npm-зависимости;
+3. собирает frontend через Vite;
+4. запускает FastAPI на `http://127.0.0.1:8787`;
+5. открывает Serveo-туннель;
+6. выводит и автоматически копирует публичный URL в буфер обмена.
 
-Текущий пароль хранится в `.env`:
-
-```text
-CHRONICLE_PASSWORD=ditrih_is_cool
-```
-
-## GitHub Pages Demo
-
-Корневой `index.html` нужен именно для GitHub Pages. Он включает `window.CHRONICLE_STATIC_DEMO = true`, грузит файлы из `static/` и запускает интерфейс без Python-сервера.
-
-Пароль демо:
-
-```text
-ditrih_is_cool
-```
-
-Ограничение: изменения в GitHub Pages-демо сохраняются только в браузере того человека, который их сделал. Другой игрок увидит свою отдельную локальную копию данных. Для общей кампании нужна публичная ссылка, созданная через `start_public_site.ps1`.
+Пароль хранится в `.env` как `CHRONICLE_PASSWORD`. Публичный URL временный и может измениться после перезапуска.
 
 ## Статус И Остановка
 
-Проверить, что сайт работает:
-
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\status_public_site.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\status_public_site.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stop_public_site.ps1
 ```
 
-Остановить сайт и туннель:
+## Выпуск Новой Версии
+
+1. Изменить Python или TypeScript-код.
+2. Запустить проверки:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\stop_public_site.ps1
-```
-
-Публичная ссылка временная. После остановки и нового запуска Serveo может выдать другой URL.
-
-## Как Выпускать Новые Версии
-
-1. Изменить код в `app.py` или файлах `static/`.
-2. Проверить синтаксис:
-
-```powershell
-python -m py_compile app.py
-node --check static/app.js
+.\.venv\Scripts\python.exe -m pytest -q
+Set-Location frontend
+npm.cmd test
+npm.cmd run build
+Set-Location ..
 ```
 
 3. Перезапустить сайт:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\stop_public_site.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\start_public_site.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stop_public_site.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start_public_site.ps1
 ```
 
-4. Отправить игрокам новый публичный URL, если он изменился.
+4. Отправить игрокам новый URL, если Serveo выдал другой адрес. Скрипт уже положит его в буфер обмена.
+
+## Архитектура
+
+Приложение является модульным монолитом. Backend разделён на `domain`, `application`, `ports`, `infrastructure` и `presentation`. Frontend разделён на доменные политики, состояние, API-шлюзы, контроллеры и специализированные интерактивные сцены.
+
+Подробные диаграммы находятся в [docs/architecture.md](docs/architecture.md).
 
 ## Справка По Файлам
 
-### Корень Проекта
+### Корень
 
-- `.env` - локальные переменные окружения. Сейчас здесь хранится пароль сайта `CHRONICLE_PASSWORD`. Файл не нужно публиковать и не стоит удалять без замены пароля в другом месте.
-- `.gitignore` - список файлов и папок, которые Git должен игнорировать: база, логи, Python-кэш и `.env`.
-- `.nojekyll` - маркер для GitHub Pages, чтобы он отдавал файлы как есть и не запускал Jekyll-обработку.
-- `index.html` - статическая точка входа для GitHub Pages-демо. Включает demo-режим frontend и не использует backend.
-- `README.md` - эта документация: как запускать, останавливать, обновлять и из каких файлов состоит проект.
-- `app.py` - основной backend. Отвечает за HTTP-сервер, парольный вход, API, работу с SQLite, начальные данные, миграции схемы и раздачу файлов из `static/`.
-- `start_public_site.ps1` - главный скрипт запуска. Читает `.env`, запускает `app.py` на `127.0.0.1:8787`, открывает публичный Serveo-туннель и сохраняет состояние запуска в `logs/public-site-state.json`.
-- `status_public_site.ps1` - показывает текущую публичную ссылку, локальный адрес, пароль, PID процессов и готовность локального приложения.
-- `stop_public_site.ps1` - останавливает процессы приложения и туннеля по данным из `logs/public-site-state.json`.
+- `.env` — локальный пароль и другие переменные окружения; не публикуется в Git.
+- `.gitignore` — исключает секреты, кэши, логи, `.venv`, зависимости и результаты Vite-сборки.
+- `app.py` — совместимая точка запуска FastAPI и режим `--init-only`.
+- `requirements.txt` — диапазоны версий Python-зависимостей.
+- `start_public_site.ps1` — сборка, запуск backend, Serveo и копирование URL.
+- `status_public_site.ps1` — URL, PID процессов и проверка готовности.
+- `stop_public_site.ps1` — остановка backend и туннеля текущего запуска.
+- `README.md` — запуск, обновление и карта проекта.
 
-### Frontend: `static/`
+### Backend: `chronicle/`
 
-- `static/index.html` - HTML-оболочка приложения. Подключает CSS и JavaScript, содержит корневой контейнер интерфейса.
-- `static/app.js` - основная логика браузерного интерфейса: экраны, формы, CRUD, доска расследования, граф, таймлайн, поиск, запросы к API и клиентское состояние.
-- `static/styles.css` - внешний вид приложения: gothic/noir-тема, layout, карточки, формы, доска, граф, панели и адаптивность интерфейса.
+- `config.py` — чтение окружения и пути к базе/frontend.
+- `main.py` — создание и запуск Uvicorn.
+- `domain/models.py` — отдельные доменные модели сущностей, досок, узлов и связей.
+- `domain/policies.py` — контекстные типы объектов и названия связей.
+- `application/services.py` — сценарии сессии, CRUD, досок, связей и запросов хроники.
+- `ports/repositories.py` — интерфейсы репозиториев и Unit of Work.
+- `infrastructure/mappers.py` — преобразование доменных объектов в legacy JSON и обратно.
+- `infrastructure/migrations.py` — последовательные, идемпотентные миграции SQLite.
+- `infrastructure/sqlite.py` — SQLite-адаптеры репозиториев.
+- `presentation/api.py` — FastAPI `/api/v1`, временный compatibility-router и раздача Vite-сборки.
 
-### Данные: `data/`
+### Frontend: `frontend/`
 
-- `data/chronicle.db` - главная SQLite-база хроники. Здесь лежат кампания, персонажи, фракции, события, факты, улики, связи, доски и остальные данные. Это самый важный пользовательский файл, его нельзя удалять при обновлениях.
+- `package.json` и `package-lock.json` — npm-команды и зафиксированные зависимости.
+- `tsconfig.json` — строгая конфигурация TypeScript.
+- `index.html` — Vite-точка входа.
+- `src/main.ts` — запуск `AppController`.
+- `src/styles.css` — общая gothic/noir-тема и адаптивные стили.
+- `src/domain/types.ts` — API-типы, ссылки на сущности, доски и раскладка графа.
+- `src/domain/registry.ts` — поля форм и возможности типов сущностей.
+- `src/domain/board-geometry.ts` — чистая геометрия карточек и связей доски.
+- `src/domain/graph-projection.ts` — обход графа по глубине цепочки.
+- `src/domain/graph-visuals.ts` — размеры и фигуры узлов для двух режимов графа.
+- `src/application/store.ts` — централизованное состояние приложения.
+- `src/application/interaction-state.ts` — state machine жестов доски.
+- `src/infrastructure/gateway.ts` — узкие HTTP-шлюзы к `/api/v1`.
+- `src/presentation/app-controller.ts` — layout, маршруты, навигация, таймлайн и поиск.
+- `src/presentation/entity-controller.ts` — типовой CRUD, карточки, формы и связи.
+- `src/presentation/board-controller.ts` — доски расследования и их команды.
+- `src/presentation/graph-controller.ts` — режимы, фильтры, поиск и инспекторы графа.
+- `src/presentation/svg-graph-scene.ts` — pan, zoom, drag и физика SVG-графа.
+- `src/presentation/forms.ts` — рендеринг и сбор данных форм.
+- `src/presentation/modal.ts` — модальные окна и уведомления.
+- `src/ui/dom.ts` — безопасное экранирование и небольшие DOM-утилиты.
+- `src/**/*.test.ts` — модульные тесты чистой логики.
 
-### Логи И Состояние: `logs/`
+### Данные И Логи
 
-- `logs/public-site-state.json` - служебный файл текущего запуска: публичный URL, локальный URL, пароль и PID процессов. Его используют `status_public_site.ps1` и `stop_public_site.ps1`.
-- `logs/public-site-app.out.log` - стандартный вывод Python-приложения.
-- `logs/public-site-app.err.log` - ошибки Python-приложения.
-- `logs/public-site-tunnel.out.log` - стандартный вывод SSH/Serveo-туннеля.
-- `logs/public-site-tunnel.err.log` - ошибки SSH/Serveo-туннеля и диагностические сообщения туннеля.
+- `data/chronicle.db` — рабочая SQLite-база; не удалять при обновлении.
+- `data/backups/` — локальные резервные копии перед миграциями.
+- `logs/public-site-state.json` — PID, URL и состояние текущего запуска.
+- `logs/*.log` — вывод backend и Serveo; их можно удалить при остановленном сайте.
 
-Логи можно чистить, когда сайт остановлен. Базу `data/chronicle.db` чистить нельзя, если нужно сохранить кампанию.
+### Тесты
 
-### Служебное
+- `tests/test_mappers.py` — round-trip всех доменных типов и legacy-полей.
+- `tests/test_api.py` — авторизация, CRUD, доски и универсальные связи.
+- `tests/test_migrations.py` — миграция копии рабочей базы без потери записей.
 
-- `.git/` - внутренняя папка Git-репозитория. Руками лучше не трогать.
-- `__pycache__/` - временный Python-кэш, может появляться после проверки `python -m py_compile app.py`. Его можно удалять; он не нужен для хранения данных.
+## Режимы Графа
 
-## Что Есть В MVP
+- **Настраиваемый** — крупные круги, узловая точка, глубина цепочки, статусы, индивидуальные цвета и размеры.
+- **Obsidian** — все узлы компактными фигурами, подписи и поиск. ЛКМ открывает краткую карточку, ПКМ открывает меню перехода на полную страницу.
 
-- общий пароль без email-регистрации, OAuth, аккаунтов и ролей;
-- серверное хранение данных в SQLite;
-- кампания, персонажи, котерия, фракции, локации, события, факты, улики, сюжетные линии, теории и мемуары;
-- универсальные связи между сущностями;
-- именованные canvas-доски расследования;
-- граф связей, таймлайн и глобальный поиск.
+В обоих режимах притягиваются только реально связанные узлы. Перенесённый узел закрепляется на новом месте.

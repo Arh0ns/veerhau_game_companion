@@ -60,7 +60,7 @@ function Write-DotEnvPassword {
 
 function Test-AppReady {
   try {
-    Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8787/api/session" -TimeoutSec 2 | Out-Null
+    Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8787/api/v1/session" -TimeoutSec 2 | Out-Null
     return $true
   } catch {
     return $false
@@ -110,6 +110,65 @@ function Write-State {
   } | ConvertTo-Json | Set-Content -Path $statePath -Encoding UTF8
 }
 
+function Copy-PublicUrl {
+  param([string]$Url)
+  if (-not $Url) {
+    return $false
+  }
+  try {
+    Set-Clipboard -Value $Url
+    Write-Host "Public URL copied to clipboard."
+    return $true
+  } catch {
+    try {
+      $Url | & "$env:WINDIR\System32\clip.exe"
+      Write-Host "Public URL copied to clipboard."
+      return $true
+    } catch {
+      Write-Warning "Could not copy the URL automatically: $($_.Exception.Message)"
+      return $false
+    }
+  }
+}
+
+function Prepare-Application {
+  $bootstrapPython = Get-Command python -ErrorAction SilentlyContinue
+  if (-not $bootstrapPython) {
+    throw "Python was not found in PATH."
+  }
+
+  $venvPython = Join-Path $root ".venv\Scripts\python.exe"
+  if (-not (Test-Path $venvPython)) {
+    Write-Host "Creating Python virtual environment..."
+    & $bootstrapPython.Source -m venv (Join-Path $root ".venv") | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Could not create .venv." }
+  }
+
+  & $venvPython -c "import fastapi, pydantic, uvicorn" 2>$null | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "Installing Python dependencies..."
+    & $venvPython -m pip install --disable-pip-version-check -r (Join-Path $root "requirements.txt") | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "Could not install Python dependencies." }
+  }
+
+  $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+  if (-not $npm) {
+    throw "Node.js/npm was not found in PATH."
+  }
+  $frontend = Join-Path $root "frontend"
+  if (-not (Test-Path (Join-Path $frontend "node_modules"))) {
+    Write-Host "Installing frontend dependencies..."
+    Push-Location $frontend
+    try { & $npm.Source ci | Out-Host } finally { Pop-Location }
+    if ($LASTEXITCODE -ne 0) { throw "Could not install frontend dependencies." }
+  }
+  Write-Host "Building the current frontend version..."
+  Push-Location $frontend
+  try { & $npm.Source run build | Out-Host } finally { Pop-Location }
+  if ($LASTEXITCODE -ne 0) { throw "Frontend build failed." }
+  return $venvPython
+}
+
 Repair-ProcessPathEnvironment
 
 $password = Read-DotEnvValue -Path $envFile -Key "CHRONICLE_PASSWORD"
@@ -123,13 +182,11 @@ if ($state -and (Process-Alive $state.appPid) -and (Process-Alive $state.tunnelP
   Write-Host "Already running."
   Write-Host "Public URL: $($state.url)"
   Write-Host "Password: $password"
+  Copy-PublicUrl -Url $state.url | Out-Null
   exit 0
 }
 
-$python = Get-Command python -ErrorAction SilentlyContinue
-if (-not $python) {
-  throw "Python was not found in PATH."
-}
+$pythonPath = Prepare-Application
 $ssh = Get-Command ssh.exe -ErrorAction SilentlyContinue
 if (-not $ssh) {
   $sshPath = "C:\Windows\System32\OpenSSH\ssh.exe"
@@ -155,7 +212,7 @@ if (Test-AppReady) {
   }
 } else {
   Remove-Item -Force -ErrorAction SilentlyContinue $appOut, $appErr
-  $appProcess = Start-Process -FilePath $python.Source -ArgumentList @("app.py") -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $appOut -RedirectStandardError $appErr -PassThru
+  $appProcess = Start-Process -FilePath $pythonPath -ArgumentList @("app.py") -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput $appOut -RedirectStandardError $appErr -PassThru
   $appPid = $appProcess.Id
   $ready = $false
   for ($i = 0; $i -lt 30; $i += 1) {
@@ -171,6 +228,13 @@ if (Test-AppReady) {
   if (-not $ready) {
     throw "App did not become ready. See $appErr"
   }
+}
+
+# Virtual-environment launchers can hand work off to another Python process.
+# Persist the PID that actually owns the listening socket so status/stop remain reliable.
+$listenerPid = Find-AppPid
+if ($listenerPid) {
+  $appPid = $listenerPid
 }
 
 Remove-Item -Force -ErrorAction SilentlyContinue $tunnelOut, $tunnelErr
@@ -209,3 +273,4 @@ Write-State -AppPid $appPid -TunnelPid $tunnelProcess.Id -Url $publicUrl -Passwo
 Write-Host "Public URL: $publicUrl"
 Write-Host "Local URL: http://127.0.0.1:8787"
 Write-Host "Password: $password"
+Copy-PublicUrl -Url $publicUrl | Out-Null
