@@ -40,6 +40,20 @@ jobs:
             systemctl restart veerhau
 
             echo "Checking service..."
-            systemctl is-active veerhau
+            systemctl restart veerhau
 
-            curl -f http://127.0.0.1:8787 > /dev/null
+            echo "Waiting for application..."
+            
+            for i in {1..15}; do
+                if curl -fs http://127.0.0.1:8787 > /dev/null; then
+                    echo "Application is running!"
+                    exit 0
+                fi
+            
+                sleep 2
+            done
+            
+            echo "Application failed to start"
+            systemctl status veerhau --no-pager
+            journalctl -u veerhau -n 50 --no-pager
+            exit 1
