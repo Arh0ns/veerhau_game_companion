@@ -1,0 +1,45 @@
+name: Deploy Veerhau
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_KEY }}
+
+          script: |
+            set -e
+
+            cd /home/other/veerhau/veerhau_game_companion
+
+            echo "Updating repository..."
+            git fetch origin
+            git reset --hard origin/main
+
+            echo "Installing Python dependencies..."
+            source venv/bin/activate
+            pip install -r requirements.txt
+
+            echo "Building frontend..."
+            cd frontend
+            npm ci
+            npm run build
+            cd ..
+
+            echo "Restarting service..."
+            systemctl restart veerhau
+
+            echo "Checking service..."
+            systemctl is-active veerhau
+
+            curl -f http://127.0.0.1:8787 > /dev/null
