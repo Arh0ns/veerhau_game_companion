@@ -134,6 +134,74 @@ def test_coterie_disposition_is_system_metadata_not_relationship(client: TestCli
     assert len(client.get("/api/v1/relationships").json()) == before
 
 
+def test_secondary_faction_requires_a_primary_faction(client: TestClient) -> None:
+    login(client)
+    rejected = client.post(
+        "/api/v1/records/factions",
+        json={"name": "Ячейка", "isSecondary": True},
+    )
+    assert rejected.status_code == 400
+    primary = client.post("/api/v1/records/factions", json={"name": "Дом"}).json()
+    created = client.post(
+        "/api/v1/records/factions",
+        json={"name": "Ячейка", "isSecondary": True, "mainFactionId": primary["id"]},
+    )
+    assert created.status_code == 201
+    assert created.json()["mainFactionId"] == primary["id"]
+
+
+def test_child_faction_relationship_controls_secondary_status(client: TestClient) -> None:
+    login(client)
+    parent = client.post("/api/v1/records/factions", json={"name": "Дом"}).json()
+    child = client.post("/api/v1/records/factions", json={"name": "Ячейка"}).json()
+    relationship = client.post(
+        "/api/v1/relationships",
+        json={
+            "sourceType": "factions",
+            "sourceId": parent["id"],
+            "targetType": "factions",
+            "targetId": child["id"],
+            "relationLabel": "Дочерняя фракция",
+        },
+    )
+    assert relationship.status_code == 201
+    marked = client.get(f"/api/v1/records/factions/{child['id']}").json()
+    assert marked["isSecondary"] is True
+    assert marked["mainFactionId"] == parent["id"]
+
+    assert client.delete(f"/api/v1/relationships/{relationship.json()['id']}").status_code == 200
+    cleared = client.get(f"/api/v1/records/factions/{child['id']}").json()
+    assert cleared["isSecondary"] is False
+    assert cleared["mainFactionId"] == ""
+
+
+def test_importance_is_available_on_every_graph_entity(client: TestClient) -> None:
+    login(client)
+    created = client.post(
+        "/api/v1/records/clues",
+        json={"title": "Ключ", "importance": "Высокая"},
+    )
+    assert created.status_code == 201
+    assert created.json()["importance"] == "Высокая"
+    assert ("field:importance", "Высокая") in {
+        (tag["namespace"], tag["value"]) for tag in created.json()["systemTags"]
+    }
+    defaulted = client.post("/api/v1/records/theories", json={"title": "Версия"})
+    assert defaulted.json()["importance"] == "Обычная"
+
+
+def test_character_importance_and_abilities_become_structured_tags(client: TestClient) -> None:
+    login(client)
+    created = client.post(
+        "/api/v1/records/characters",
+        json={"name": "Провидец", "importance": "Высокая", "knownAbilities": ["Прорицание"]},
+    )
+    assert created.status_code == 201
+    namespaces = {(tag["namespace"], tag["value"]) for tag in created.json()["systemTags"]}
+    assert ("field:importance", "Высокая") in namespaces
+    assert ("field:knownAbilities", "Прорицание") in namespaces
+
+
 def test_structured_system_tags_round_trip_on_other_entities(client: TestClient) -> None:
     login(client)
     created = client.post(

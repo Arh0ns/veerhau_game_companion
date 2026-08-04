@@ -32,6 +32,11 @@ const NAMESPACE_LABELS: Record<string, string> = {
   relatedEvents: "событие",
   relatedCharacters: "персонаж",
   relatedFactions: "фракция",
+  knownAbilities: "способность",
+  isSecondary: "второстепенная фракция",
+  mainFactionId: "основная фракция",
+  importance: "важность",
+  contentType: "тип материала",
 };
 
 export function readSystemTags(record: ChronicleRecord | undefined): SystemTag[] {
@@ -93,8 +98,10 @@ export function projectStructuredTags(
         return relationship.targetType === entity && relationship.targetId === record.id && relationship.sourceType === field.entity;
       }).map((relationship) => field.currentRole === "source" ? relationship.targetId : relationship.sourceId);
       add(field, values);
-    } else if (field.kind === "multiRef") {
+    } else if (field.kind === "multiRef" || field.kind === "tokenList") {
       add(field, Array.isArray(record[field.key]) ? (record[field.key] as unknown[]).filter((value): value is string => typeof value === "string") : []);
+    } else if (field.kind === "checkbox") {
+      add(field, record[field.key] ? ["Да"] : []);
     } else if (["select", "searchSelect", "ref"].includes(field.kind)) {
       const value = String(record[field.key] ?? "").trim();
       add(field, value ? [value] : []);

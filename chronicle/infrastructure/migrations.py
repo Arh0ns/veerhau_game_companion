@@ -619,6 +619,156 @@ def _migrate_v15_location_relationships(conn: sqlite3.Connection) -> None:
                 conn, "locations", row["id"], "locations", parent_city_id, "находится в"
             )
 
+
+def _migrate_v16_independent_graph_modes(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    for row in conn.execute("SELECT * FROM records WHERE entity='graphLayouts'").fetchall():
+        payload = json.loads(row["data"])
+        if isinstance(payload.get("modeLayouts"), dict) and {"custom", "obsidian"}.issubset(payload["modeLayouts"]):
+            continue
+        legacy_nodes = payload.get("nodes") if isinstance(payload.get("nodes"), list) else []
+        custom_nodes = [dict(node) for node in legacy_nodes if isinstance(node, dict)]
+        obsidian_nodes = []
+        for node in custom_nodes:
+            obsidian_nodes.append(
+                {
+                    "entity": node.get("entity", ""),
+                    "id": node.get("id", ""),
+                    "x": node.get("x", 0),
+                    "y": node.get("y", 0),
+                    "scale": 1,
+                    "pinned": False,
+                }
+            )
+        viewport = payload.get("viewport") if isinstance(payload.get("viewport"), dict) else {"x": 0, "y": 0, "zoom": 1}
+        payload["modeLayouts"] = {
+            "custom": {"nodes": custom_nodes, "viewport": dict(viewport)},
+            "obsidian": {"nodes": obsidian_nodes, "viewport": {"x": 0, "y": 0, "zoom": 1}},
+        }
+        _put_record(conn, row["entity"], row["id"], payload, row["created_at"], now)
+
+
+def _migrate_v17_global_importance_and_faction_sects(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    graph_entities = (
+        "coteries",
+        "characters",
+        "factions",
+        "locations",
+        "events",
+        "facts",
+        "clues",
+        "storylines",
+        "theories",
+        "notes",
+    )
+    placeholders = ",".join("?" for _ in graph_entities)
+    for row in conn.execute(
+        f"SELECT * FROM records WHERE entity IN ({placeholders})",
+        graph_entities,
+    ).fetchall():
+        payload = json.loads(row["data"])
+        importance = str(payload.get("importance") or "Обычная").strip()
+        payload["importance"] = importance
+        if row["entity"] == "factions":
+            current_sect = str(payload.get("sect") or "").strip()
+            payload["sect"] = current_sect or (
+                payload.get("name") if payload.get("name") in {"Камарилья", "Шабаш", "Анархи"} else "Не известно"
+            )
+        existing = [item for item in payload.get("systemTags", []) if isinstance(item, dict)]
+        controlled = {"field:importance"}
+        if row["entity"] == "factions":
+            controlled.add("field:sect")
+        system_tags = [item for item in existing if item.get("namespace") not in controlled]
+        system_tags.append(
+            {"namespace": "field:importance", "value": importance, "label": importance, "color": ""}
+        )
+        if row["entity"] == "factions":
+            system_tags.append(
+                {"namespace": "field:sect", "value": payload["sect"], "label": payload["sect"], "color": ""}
+            )
+        payload["systemTags"] = system_tags
+        _put_record(conn, row["entity"], row["id"], payload, row["created_at"], now)
+
+
+    child_parents: dict[str, str] = {}
+    for relationship in conn.execute(
+        "SELECT * FROM relationships WHERE source_type='factions' AND target_type='factions' ORDER BY updated_at, id"
+    ).fetchall():
+        if str(relationship["relation_label"] or "").strip().casefold() == "дочерняя фракция":
+            child_parents[relationship["target_id"]] = relationship["source_id"]
+    for row in conn.execute("SELECT * FROM records WHERE entity='factions'").fetchall():
+        payload = json.loads(row["data"])
+        parent_id = child_parents.get(row["id"])
+        if not parent_id:
+            continue
+        payload["isSecondary"] = True
+        payload["mainFactionId"] = parent_id
+        existing = [item for item in payload.get("systemTags", []) if isinstance(item, dict)]
+        payload["systemTags"] = [
+            item for item in existing if item.get("namespace") != "field:mainFactionId"
+        ] + [{"namespace": "field:mainFactionId", "value": parent_id, "label": parent_id, "color": ""}]
+        _put_record(conn, row["entity"], row["id"], payload, row["created_at"], now)
+
+    for row in conn.execute("SELECT * FROM records WHERE entity='graphLayouts'").fetchall():
+        payload = json.loads(row["data"])
+        mode_styles = payload.get("modeStyles")
+        if not isinstance(mode_styles, dict):
+            continue
+        for mode_style in mode_styles.values():
+            if not isinstance(mode_style, dict):
+                continue
+            styles = mode_style.get("entityTypeStyles")
+            if not isinstance(styles, dict):
+                continue
+            for importance in ("Высокая", "Обычная", "Низкая"):
+                global_key = f"importance={importance}"
+                if global_key not in styles:
+                    for entity in ("characters", "events", "facts"):
+                        legacy_key = f"{entity}::importance={importance}"
+                        if isinstance(styles.get(legacy_key), dict):
+                            styles[global_key] = dict(styles[legacy_key])
+                            break
+                for entity in ("characters", "events", "facts"):
+                    styles.pop(f"{entity}::importance={importance}", None)
+            for sect in ("Камарилья", "Шабаш", "Анархи", "Не известно", "Неизвестно"):
+                legacy_key = f"locations::sect={sect}"
+                target_sect = "Не известно" if sect == "Неизвестно" else sect
+                target_key = f"factions::sect={target_sect}"
+                if target_key not in styles and isinstance(styles.get(legacy_key), dict):
+                    styles[target_key] = dict(styles[legacy_key])
+                styles.pop(legacy_key, None)
+        _put_record(conn, row["entity"], row["id"], payload, row["created_at"], now)
+
+
+def _migrate_v18_importance_outline_only(conn: sqlite3.Connection) -> None:
+    now = utc_now()
+    ignored_fields = ("color", "textColor", "fontFamily", "labelSize", "labelWeight")
+    for row in conn.execute("SELECT * FROM records WHERE entity='graphLayouts'").fetchall():
+        payload = json.loads(row["data"])
+        changed = False
+        mode_styles = payload.get("modeStyles")
+        if not isinstance(mode_styles, dict):
+            continue
+        for mode_style in mode_styles.values():
+            if not isinstance(mode_style, dict):
+                continue
+            styles = mode_style.get("entityTypeStyles")
+            if not isinstance(styles, dict):
+                continue
+            for key, style in styles.items():
+                if not str(key).startswith("importance=") or not isinstance(style, dict):
+                    continue
+                if style.get("color") and not style.get("borderColor"):
+                    style["borderColor"] = style["color"]
+                    changed = True
+                for field in ignored_fields:
+                    if field in style:
+                        style.pop(field, None)
+                        changed = True
+        if changed:
+            _put_record(conn, row["entity"], row["id"], payload, row["created_at"], now)
+
 MIGRATIONS = {
     2: _migrate_v2_coterie,
     3: _migrate_v3_dedupe_relationships,
@@ -634,6 +784,9 @@ MIGRATIONS = {
     13: _migrate_v13_structured_tags,
     14: _migrate_v14_relationship_lines,
     15: _migrate_v15_location_relationships,
+    16: _migrate_v16_independent_graph_modes,
+    17: _migrate_v17_global_importance_and_faction_sects,
+    18: _migrate_v18_importance_outline_only,
 }
 
 

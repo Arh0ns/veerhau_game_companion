@@ -136,6 +136,7 @@ export interface GraphEntityTypeStyle {
   labelSize?: number;
   labelWeight?: number;
   scale?: number;
+  mass?: number;
 }
 
 export interface GraphModeStyle {
@@ -154,7 +155,12 @@ export interface GraphModeStyle {
   edgeOpacity: number;
   nodeScale: number;
   physics: GraphPhysicsStyle;
-  entityTypeStyles: Partial<Record<EntityType, GraphEntityTypeStyle>>;
+  entityTypeStyles: Record<string, GraphEntityTypeStyle>;
+}
+
+export interface GraphModeLayout {
+  nodes: GraphNodePlacement[];
+  viewport: Viewport;
 }
 
 export interface GraphLayout extends ChronicleRecord {
@@ -164,6 +170,7 @@ export interface GraphLayout extends ChronicleRecord {
   mode: GraphMode;
   filters: Record<string, unknown>;
   modeStyles: Record<GraphMode, GraphModeStyle>;
+  modeLayouts?: Record<GraphMode, GraphModeLayout>;
 }
 
 export type ChronicleSnapshot = {

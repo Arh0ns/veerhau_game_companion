@@ -1,4 +1,5 @@
 import type { ChronicleRecord, EntityType, Relationship } from "./types";
+import { GRAPH_CONTENT_TYPES, GRAPH_IMPORTANCE } from "./graph-style";
 
 export type FieldKind =
   | "text"
@@ -11,7 +12,8 @@ export type FieldKind =
   | "disposition"
   | "ref"
   | "multiRef"
-  | "relationshipSet";
+  | "relationshipSet"
+  | "checkbox";
 
 export interface FieldDefinition {
   key: string;
@@ -53,6 +55,8 @@ export const OPTIONS = {
   storylineStatus: ["Активна", "Пауза", "Закрыта", "Провалена"],
   theoryStatus: ["Черновик", "Обсуждается", "Подтверждена", "Опровергнута"],
   citySect: ["Камарилья", "Шабаш", "Анархи", UNKNOWN],
+  graphImportance: GRAPH_IMPORTANCE,
+  contentType: GRAPH_CONTENT_TYPES,
 } as const;
 
 function value(record: ChronicleRecord, key: string): string {
@@ -93,6 +97,8 @@ const definitions: EntityDefinition[] = [
       { key: "vampireClan", label: "Клан", kind: "searchSelect", options: OPTIONS.vampireClan, visibleWhen: { field: "species", values: ["Вампир"] } },
       { key: "garouTribe", label: "Племя", kind: "searchSelect", options: OPTIONS.garouTribe, visibleWhen: { field: "species", values: ["Гару"] } },
       { key: "status", label: "Статус", kind: "select", options: OPTIONS.characterStatus },
+      { key: "importance", label: "Важность", kind: "select", options: OPTIONS.graphImportance },
+      { key: "knownAbilities", label: "Известные способности", kind: "tokenList", placeholder: "Дисциплины, дары, сферы...", wide: true },
       { key: "systemTags", label: "Отношение к котерии", kind: "disposition", visibleWhen: { field: "characterType", values: ["NPC"] } },
       { key: "coterie", label: "Котерия", kind: "relationshipSet", entity: "coteries", relationLabel: "член", currentRole: "target" },
       { key: "faction", label: "Фракция", kind: "relationshipSet", entity: "factions", relationLabel: "член", currentRole: "target" },
@@ -105,8 +111,11 @@ const definitions: EntityDefinition[] = [
     fields: [
       { key: "name", label: "Название", kind: "text", required: true },
       { key: "factionType", label: "Тип", kind: "text", placeholder: "клан, культ, корпорация..." },
+      { key: "sect", label: "Секта", kind: "select", options: OPTIONS.citySect },
       { key: "description", label: "Описание", kind: "textarea", wide: true },
       { key: "goals", label: "Цели", kind: "textarea", wide: true },
+      { key: "isSecondary", label: "Второстепенная фракция", kind: "checkbox" },
+      { key: "mainFactionId", label: "Основная фракция", kind: "ref", entity: "factions", filter: (r) => !Boolean(r.isSecondary), visibleWhen: { field: "isSecondary", values: ["true"] } },
       { key: "systemTags", label: "Отношение к котерии", kind: "disposition" },
       { key: "members", label: "Участники", kind: "relationshipSet", entity: "characters", relationLabel: "член", currentRole: "source", wide: true },
       { key: "allies", label: "Союзники", kind: "relationshipSet", entity: "factions", relationLabel: "союзник", currentRole: "source" },
@@ -133,6 +142,8 @@ const definitions: EntityDefinition[] = [
       { key: "title", label: "Название", kind: "text", required: true },
       { key: "gameDate", label: "Игровая дата", kind: "date" },
       { key: "gameTime", label: "Время", kind: "time" },
+      { key: "importance", label: "Важность", kind: "select", options: OPTIONS.graphImportance },
+      { key: "contentType", label: "Тип материала", kind: "select", options: OPTIONS.contentType },
       { key: "cityId", label: "Город", kind: "ref", entity: "locations", filter: (r) => value(r, "level") === "Город" },
       { key: "placeId", label: "Место", kind: "ref", entity: "locations", filter: (r) => value(r, "level") === "Место в городе" },
       { key: "participants", label: "Участники", kind: "relationshipSet", entity: "characters", relationLabel: "участник", currentRole: "source", wide: true },
@@ -147,6 +158,8 @@ const definitions: EntityDefinition[] = [
       { key: "statement", label: "Формулировка", kind: "textarea", required: true, wide: true },
       { key: "source", label: "Источник", kind: "text" },
       { key: "reliability", label: "Достоверность", kind: "select", options: OPTIONS.reliability },
+      { key: "importance", label: "Важность", kind: "select", options: OPTIONS.graphImportance },
+      { key: "contentType", label: "Тип материала", kind: "select", options: OPTIONS.contentType },
       { key: "eventId", label: "Связанное событие", kind: "ref", entity: "events" },
       { key: "notes", label: "Заметки", kind: "textarea", wide: true },
     ], title: fallbackTitle, summary: (r) => value(r, "source") || value(r, "notes"),
@@ -245,6 +258,13 @@ const definitions: EntityDefinition[] = [
 const taggable = new Set<EntityType>(["coteries", "characters", "factions", "locations", "events", "facts", "clues", "storylines", "theories", "notes", "memoirs"]);
 for (const definition of definitions) {
   if (!taggable.has(definition.type)) continue;
+  if (definition.graphable && !definition.fields.some((field) => field.key === "importance")) {
+    definition.fields = [
+      ...definition.fields.slice(0, 1),
+      { key: "importance", label: "Важность", kind: "select", options: OPTIONS.graphImportance },
+      ...definition.fields.slice(1),
+    ];
+  }
   const metadata: FieldDefinition[] = [
     { key: "tags", label: "Теги", kind: "tokenList", wide: true, placeholder: "город/прага, дело/князь" },
   ];

@@ -17,6 +17,16 @@ export interface EntityControllerHost {
   returnRoute(fallback: string): string;
 }
 
+interface RelationshipDraft {
+  targetType: EntityType;
+  targetId: string;
+  relationLabel: string;
+  notes: string;
+  edgeColor: string;
+  arrowDirection: Relationship["arrowDirection"];
+  lineStyle: Relationship["lineStyle"];
+}
+
 export class EntityController {
   private readonly forms: EntityFormRenderer;
   private readonly dispositionPolicy = new CoterieDispositionPolicy();
@@ -151,21 +161,36 @@ export class EntityController {
     id?: string,
     preset: Record<string, unknown> = {},
     afterSave?: (record: ChronicleRecord) => Promise<void> | void,
+    afterCancel?: () => void,
   ): void {
     const record = id ? this.store.record(entity, id) : undefined;
+    const effectivePreset = record ? preset : {
+      ...(this.registry.get(entity).graphable ? { importance: "Обычная" } : {}),
+      ...(entity === "factions" ? { sect: "Не известно" } : {}),
+      ...preset,
+    };
     const returnRoute = this.host.returnRoute(`entity:${entity}`);
     const root = this.modal.open(
       record ? `Редактировать: ${this.registry.get(entity).title(record)}` : `Новый объект: ${this.registry.get(entity).singular}`,
-      this.forms.render(entity, record, preset),
+      this.forms.render(entity, record, effectivePreset),
       "modal-wide",
     );
-    if (!record) this.bindTemplatePicker(root, entity, preset);
+    if (!record) this.bindTemplatePicker(root, entity, effectivePreset);
+    if (afterCancel) root.addEventListener("click", (event) => {
+      const target = event.target;
+      if (target === root || (target instanceof Element && target.closest("[data-modal-close]"))) queueMicrotask(afterCancel);
+    });
     this.forms.bindConditionalFields(root);
     const form = root.querySelector<HTMLFormElement>("[data-entity-form]");
     form?.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.run(async () => {
         if (!form.reportValidity()) return;
+        if (entity === "factions") {
+          const isSecondary = (form.elements.namedItem("isSecondary") as HTMLInputElement | null)?.checked;
+          const mainFactionId = String((form.elements.namedItem("mainFactionId") as HTMLSelectElement | null)?.value ?? "");
+          if (isSecondary && !mainFactionId) throw new Error("Для второстепенной фракции выберите основную фракцию.");
+        }
         const submit = form.querySelector<HTMLButtonElement>("[type=submit]");
         if (submit) submit.disabled = true;
         const collected = this.forms.collect(form);
@@ -219,6 +244,7 @@ export class EntityController {
     sourceId: string,
     relationship?: Relationship,
     fixedTarget?: { entityType: EntityType; entityId: string },
+    draft?: RelationshipDraft,
   ): void {
     const sourceTitle = this.title(sourceType, sourceId);
     const root = this.modal.open(relationship ? "Редактировать связь" : `Новая связь: ${sourceTitle}`, `
@@ -228,8 +254,8 @@ export class EntityController {
           <label class="field"><span>Объект</span><select name="targetId" ${relationship || fixedTarget ? "disabled" : ""}></select></label>
           <label class="field"><span>Название связи</span><select name="labelPreset"></select></label>
           <label class="field" data-custom-label hidden><span>Своё название</span><input name="customLabel" placeholder="Введите название связи"></label>
-          <label class="field wide"><span>Подробности</span><textarea name="notes">${escapeHtml(relationship?.notes ?? "")}</textarea></label>
-          <label class="field"><span>Цвет</span><input type="color" name="edgeColor" value="${escapeAttr(relationship?.edgeColor || defaultRelationshipColor(relationship?.relationLabel ?? "связано"))}">${this.renderColorSwatches(this.usedRelationshipColors(), "edgeColor")}</label>
+          <label class="field wide"><span>Подробности</span><textarea name="notes">${escapeHtml(draft?.notes ?? relationship?.notes ?? "")}</textarea></label>
+          <label class="field"><span>Цвет</span><input type="color" name="edgeColor" value="${escapeAttr(draft?.edgeColor || relationship?.edgeColor || defaultRelationshipColor(relationship?.relationLabel ?? "связано"))}">${this.renderColorSwatches(this.usedRelationshipColors(), "edgeColor")}</label>
           <label class="field"><span>Стрелка</span><select name="arrowDirection"><option value="">Без стрелки</option><option value="source-to-target">От первого ко второму</option><option value="target-to-source">От второго к первому</option></select></label>
           <label class="field"><span>Тип линии</span><select name="lineStyle"><option value="solid">Сплошная</option><option value="dashed">Пунктирная</option></select></label>
         </div>
@@ -252,15 +278,16 @@ export class EntityController {
     });
 
     const targetGroups = this.choices.targets(sourceType);
-    const initialTargetType = fixedTarget?.entityType ?? (relationship ? (relationship.sourceType === sourceType && relationship.sourceId === sourceId ? relationship.targetType : relationship.sourceType) : targetGroups.recommended[0] ?? "characters");
+    const initialTargetType = fixedTarget?.entityType ?? draft?.targetType ?? (relationship ? (relationship.sourceType === sourceType && relationship.sourceId === sourceId ? relationship.targetType : relationship.sourceType) : targetGroups.recommended[0] ?? "characters");
     targetTypeSelect.innerHTML = `${this.typeOptions(targetGroups.recommended, "Рекомендуемые", initialTargetType)}${this.typeOptions(targetGroups.more, "Ещё", initialTargetType)}`;
     targetTypeSelect.value = initialTargetType;
 
     const updateTargets = () => {
       const targetType = targetTypeSelect.value as EntityType;
-      const currentTargetId = fixedTarget?.entityId ?? (relationship ? (relationship.sourceType === sourceType && relationship.sourceId === sourceId ? relationship.targetId : relationship.sourceId) : "");
+      const currentTargetId = fixedTarget?.entityId ?? draft?.targetId ?? (relationship ? (relationship.sourceType === sourceType && relationship.sourceId === sourceId ? relationship.targetId : relationship.sourceId) : "");
       const definition = this.registry.get(targetType);
-      targetIdSelect.innerHTML = this.store.records(targetType).filter((record) => !(targetType === sourceType && record.id === sourceId)).map((record) => `<option value="${escapeAttr(record.id)}">${escapeHtml(definition.title(record))}</option>`).join("");
+      const createOption = relationship || fixedTarget ? "" : `<option value="__new__">＋ Новый объект…</option>`;
+      targetIdSelect.innerHTML = createOption + this.store.records(targetType).filter((record) => !(targetType === sourceType && record.id === sourceId)).map((record) => `<option value="${escapeAttr(record.id)}">${escapeHtml(definition.title(record))}</option>`).join("");
       if (currentTargetId) targetIdSelect.value = currentTargetId;
       updateLabels();
     };
@@ -270,22 +297,43 @@ export class EntityController {
         ...this.labels.presets(sourceType, targetType),
         ...this.store.getState().snapshot.relationships.map((item) => item.relationLabel.trim()).filter(Boolean),
       ])];
-      const currentLabel = relationship?.relationLabel || presets[0] || "связано";
+      const currentLabel = draft?.relationLabel || relationship?.relationLabel || presets[0] || "связано";
       const mode = presets.includes(currentLabel) ? currentLabel : "__custom";
       labelSelect.innerHTML = `${presets.map((label) => `<option value="${escapeAttr(label)}">${escapeHtml(label)}</option>`).join("")}<option value="__custom">Своё название...</option>`;
       labelSelect.value = mode;
-      customInput.value = mode === "__custom" ? relationship?.relationLabel ?? "" : "";
+      customInput.value = mode === "__custom" ? draft?.relationLabel ?? relationship?.relationLabel ?? "" : "";
       if (customRow) customRow.hidden = mode !== "__custom";
       if (!relationship && mode !== "__custom") edgeColorInput.value = defaultRelationshipColor(labelSelect.value);
     };
     targetTypeSelect.addEventListener("change", updateTargets);
+    targetIdSelect.addEventListener("change", () => {
+      if (targetIdSelect.value !== "__new__") return;
+      const targetType = targetTypeSelect.value as EntityType;
+      const relationLabel = labelSelect.value === "__custom" ? customInput.value.trim() : labelSelect.value;
+      const savedDraft: RelationshipDraft = {
+        targetType,
+        targetId: "",
+        relationLabel,
+        notes: String((form.elements.namedItem("notes") as HTMLTextAreaElement).value),
+        edgeColor: edgeColorInput.value,
+        arrowDirection: arrowSelect.value as Relationship["arrowDirection"],
+        lineStyle: lineStyleSelect.value as Relationship["lineStyle"],
+      };
+      this.openEntityForm(
+        targetType,
+        undefined,
+        {},
+        (saved) => this.openRelationshipEditor(sourceType, sourceId, relationship, undefined, { ...savedDraft, targetId: saved.id }),
+        () => this.openRelationshipEditor(sourceType, sourceId, relationship, undefined, savedDraft),
+      );
+    });
     labelSelect.addEventListener("change", () => {
       if (customRow) customRow.hidden = labelSelect.value !== "__custom";
       if (labelSelect.value !== "__custom" && (!relationship || ["#c8a85a", "#737982"].includes(edgeColorInput.value.toLocaleLowerCase("ru")))) edgeColorInput.value = defaultRelationshipColor(labelSelect.value);
     });
     updateTargets();
-    arrowSelect.value = relationship?.arrowDirection ?? "";
-    lineStyleSelect.value = relationship?.lineStyle ?? "solid";
+    arrowSelect.value = draft?.arrowDirection ?? relationship?.arrowDirection ?? "";
+    lineStyleSelect.value = draft?.lineStyle ?? relationship?.lineStyle ?? "solid";
 
     form.addEventListener("submit", (event) => {
       event.preventDefault();

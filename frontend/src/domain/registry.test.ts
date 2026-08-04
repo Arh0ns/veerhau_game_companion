@@ -22,4 +22,18 @@ describe("entity registry policies", () => {
     expect(fields.find((field) => field.key === "sect")?.options).toEqual(["Камарилья", "Шабаш", "Анархи", "Не известно"]);
     expect(fields.find((field) => field.key === "factionId")?.relationLabel).toBe("принадлежит");
   });
+
+  it("exposes graph classification and character abilities", () => {
+    const registry = new EntityRegistry();
+    expect(registry.get("characters").fields.find((field) => field.key === "knownAbilities")?.kind).toBe("tokenList");
+    for (const entity of new EntityRegistry().graphable().map((definition) => definition.type)) {
+      expect(registry.get(entity).fields.find((field) => field.key === "importance")?.options).toEqual(["Высокая", "Обычная", "Низкая"]);
+    }
+    for (const entity of ["events", "facts"] as const) {
+      expect(registry.get(entity).fields.find((field) => field.key === "contentType")?.options).toEqual(["Сюжетное", "Личное", "Лорное"]);
+    }
+    expect(registry.get("factions").fields.find((field) => field.key === "isSecondary")?.kind).toBe("checkbox");
+    expect(registry.get("factions").fields.find((field) => field.key === "mainFactionId")?.entity).toBe("factions");
+    expect(registry.get("factions").fields.find((field) => field.key === "sect")?.options).toEqual(["Камарилья", "Шабаш", "Анархи", "Не известно"]);
+  });
 });

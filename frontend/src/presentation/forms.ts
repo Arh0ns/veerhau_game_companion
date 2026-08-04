@@ -63,7 +63,13 @@ export class EntityFormRenderer {
         payload[field.key] = values;
         addFieldTags(field, values);
       } else if (field.kind === "tokenList") {
-        payload[field.key] = String(data.get(field.key) ?? "").split(/[,;\n]/).map((item) => item.trim()).filter(Boolean);
+        const values = String(data.get(field.key) ?? "").split(/[,;\n]/).map((item) => item.trim()).filter(Boolean);
+        payload[field.key] = values;
+        addFieldTags(field, values);
+      } else if (field.kind === "checkbox") {
+        const checked = data.get(field.key) === "true";
+        payload[field.key] = checked;
+        addFieldTags(field, checked ? ["Да"] : []);
       } else if (field.kind === "disposition") {
         replacedNamespaces.add(CoterieDispositionPolicy.namespace);
         generatedSystemTags.push(...this.dispositionPolicy.toSystemTags(
@@ -76,6 +82,14 @@ export class EntityFormRenderer {
         payload[field.key] = value;
         if (["select", "searchSelect", "ref"].includes(field.kind)) addFieldTags(field, value ? [value] : []);
         if (field.kind === "ref" && field.relationLabel && field.currentRole) relationships.set(field.key, value ? [value] : []);
+      }
+    }
+    if (entity === "factions" && payload.isSecondary !== true) {
+      payload.mainFactionId = "";
+      const namespace = "field:mainFactionId";
+      replacedNamespaces.add(namespace);
+      for (let index = generatedSystemTags.length - 1; index >= 0; index -= 1) {
+        if (generatedSystemTags[index]?.namespace === namespace) generatedSystemTags.splice(index, 1);
       }
     }
     if (replacedNamespaces.size) payload.systemTags = mergeSystemTags(readSystemTags(original), replacedNamespaces, generatedSystemTags);
@@ -135,7 +149,9 @@ export class EntityFormRenderer {
     if (field.kind === "disposition") return this.renderDisposition(field, record, visibleAttrs);
     const value = field.kind === "tokenList" ? asStringArray(record[field.key]).join(", ") : asString(record[field.key]);
     let control = "";
-    if (field.kind === "textarea") {
+    if (field.kind === "checkbox") {
+      return `<label class="${classes} checkbox-field" ${visibleAttrs}><input type="checkbox" name="${field.key}" value="true" ${record[field.key] ? "checked" : ""}><span>${escapeHtml(field.label)}</span></label>`;
+    } else if (field.kind === "textarea") {
       control = `<textarea name="${field.key}" ${required}>${escapeHtml(value)}</textarea>`;
     } else if (field.kind === "select") {
       control = `<select name="${field.key}" ${required}><option value="">Не указано</option>${(field.options ?? []).map((option) => `<option value="${escapeAttr(option)}" ${value === option ? "selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`;
@@ -146,7 +162,7 @@ export class EntityFormRenderer {
       const listId = field.key === "tags" ? `known-tags-${entity}` : "";
       control = `<input name="${field.key}" value="${escapeAttr(value)}" ${listId ? `list="${listId}"` : ""} placeholder="${escapeAttr(field.placeholder ?? "")}" autocomplete="off">${listId ? `<datalist id="${listId}">${this.allTags().map((tag) => `<option value="${escapeAttr(tag)}"></option>`).join("")}</datalist>` : ""}<small class="field-help">Несколько значений разделяются запятыми.</small>`;
     } else if (field.kind === "ref") {
-      control = this.renderRef(field, value, required);
+      control = this.renderRef(field, value, required, entity, record.id);
     } else if (field.kind === "multiRef") {
       control = this.renderMultiRef(field, asStringArray(record[field.key]));
     } else if (field.kind === "relationshipSet") {
@@ -191,10 +207,10 @@ export class EntityFormRenderer {
     return [...result].sort((a, b) => a.localeCompare(b, "ru"));
   }
 
-  private renderRef(field: FieldDefinition, selected: string, required: string): string {
+  private renderRef(field: FieldDefinition, selected: string, required: string, currentEntity: EntityType, currentId: string): string {
     if (!field.entity) return "";
     const definition = this.registry.get(field.entity);
-    const records = this.store.records(field.entity).filter((record) => !field.filter || field.filter(record));
+    const records = this.store.records(field.entity).filter((record) => !(field.entity === currentEntity && record.id === currentId) && (!field.filter || field.filter(record)));
     return `<select name="${field.key}" ${required}><option value="">Не указано</option>${records.map((record) => `<option value="${escapeAttr(record.id)}" ${selected === record.id ? "selected" : ""}>${escapeHtml(definition.title(record))}</option>`).join("")}</select>`;
   }
 

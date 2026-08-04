@@ -17,6 +17,7 @@ from chronicle.domain.models import (
     PUBLIC_ENTITY_TYPES,
     RecordEnvelope,
     Relationship,
+    SystemTag,
     TAGGABLE_ENTITY_TYPES,
     TagDefinition,
 )
@@ -26,6 +27,19 @@ from chronicle.ports.repositories import UnitOfWork
 
 
 UnitOfWorkFactory = Callable[[], UnitOfWork]
+
+GRAPH_ENTITY_TYPES = {
+    EntityType.COTERIES,
+    EntityType.CHARACTERS,
+    EntityType.FACTIONS,
+    EntityType.LOCATIONS,
+    EntityType.EVENTS,
+    EntityType.FACTS,
+    EntityType.CLUES,
+    EntityType.STORYLINES,
+    EntityType.THEORIES,
+    EntityType.NOTES,
+}
 
 ID_PREFIXES: dict[EntityType, str] = {
     EntityType.CAMPAIGNS: "cmp",
@@ -125,14 +139,16 @@ def normalize_string_list(value: Any, *, tags: bool = False) -> list[str]:
 
 
 STRUCTURED_TAG_FIELDS: dict[EntityType, tuple[str, ...]] = {
-    EntityType.CHARACTERS: ("characterType", "species", "vampireClan", "garouTribe", "status"),
-    EntityType.LOCATIONS: ("level", "parentCityId", "sect", "factionId"),
-    EntityType.EVENTS: ("cityId", "placeId"),
-    EntityType.FACTS: ("reliability", "eventId"),
-    EntityType.CLUES: ("reliability", "eventId", "discoveredByIds"),
-    EntityType.STORYLINES: ("status",),
-    EntityType.THEORIES: ("authorId", "status"),
-    EntityType.NOTES: ("authorId",),
+    EntityType.COTERIES: ("importance",),
+    EntityType.CHARACTERS: ("characterType", "species", "vampireClan", "garouTribe", "status", "importance", "knownAbilities"),
+    EntityType.FACTIONS: ("factionType", "sect", "importance", "mainFactionId"),
+    EntityType.LOCATIONS: ("level", "parentCityId", "sect", "factionId", "importance"),
+    EntityType.EVENTS: ("cityId", "placeId", "importance", "contentType"),
+    EntityType.FACTS: ("reliability", "eventId", "importance", "contentType"),
+    EntityType.CLUES: ("reliability", "eventId", "discoveredByIds", "importance"),
+    EntityType.STORYLINES: ("status", "importance"),
+    EntityType.THEORIES: ("authorId", "status", "importance"),
+    EntityType.NOTES: ("authorId", "importance"),
     EntityType.MEMOIRS: ("authorId", "eventIds", "characterIds"),
 }
 
@@ -211,6 +227,7 @@ class RecordService:
         self._apply_policies(entity)
         self._validate(entity)
         with self.uow_factory() as uow:
+            self._validate_references(entity, uow)
             uow.records.save(entity)
         return serialize_entity(entity, self.mappers)
 
@@ -235,6 +252,7 @@ class RecordService:
             )
             self._apply_policies(updated)
             self._validate(updated)
+            self._validate_references(updated, uow)
             uow.records.save(updated)
         return serialize_entity(updated, self.mappers)
 
@@ -259,6 +277,10 @@ class RecordService:
     @staticmethod
     def _prepare_payload(entity_type: EntityType, payload: dict[str, Any]) -> dict[str, Any]:
         prepared = dict(payload)
+        if entity_type in GRAPH_ENTITY_TYPES and not str(prepared.get("importance") or "").strip():
+            prepared["importance"] = "Обычная"
+        if entity_type is EntityType.FACTIONS and not str(prepared.get("sect") or "").strip():
+            prepared["sect"] = "Не известно"
         if entity_type in TAGGABLE_ENTITY_TYPES:
             prepared["tags"] = normalize_string_list(prepared.get("tags"), tags=True)
             if entity_type is not EntityType.MEMOIRS:
@@ -269,6 +291,20 @@ class RecordService:
     def _apply_policies(self, entity: ChronicleEntity) -> None:
         if isinstance(entity, (Character, Faction)):
             self.disposition_policy.normalize(entity)
+        if isinstance(entity, Faction) and not entity.is_secondary:
+            entity.main_faction_id = ""
+
+    @staticmethod
+    def _validate_references(entity: ChronicleEntity, uow: UnitOfWork) -> None:
+        if not isinstance(entity, Faction) or not entity.is_secondary:
+            return
+        if not entity.main_faction_id:
+            raise ValidationError("Для второстепенной фракции выберите основную фракцию.")
+        if entity.main_faction_id == entity.id:
+            raise ValidationError("Фракция не может быть основной для самой себя.")
+        main = uow.records.find(EntityRef(EntityType.FACTIONS, entity.main_faction_id))
+        if not isinstance(main, Faction) or main.is_secondary:
+            raise ValidationError("Основной может быть только существующая невторостепенная фракция.")
 
 
 class TagService:
@@ -418,6 +454,8 @@ class BoardService:
 
 
 class RelationshipService:
+    CHILD_FACTION_LABEL = "дочерняя фракция"
+
     def __init__(
         self,
         uow_factory: UnitOfWorkFactory,
@@ -475,6 +513,7 @@ class RelationshipService:
                 updated_at=now,
             )
             uow.relationships.save(relationship)
+            self._sync_child_factions(uow, existing, relationship)
         return serialize_relationship(relationship), created
 
     def update(self, relationship_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -517,12 +556,76 @@ class RelationshipService:
             uow.relationships.save(relationship)
             if duplicate:
                 uow.relationships.delete(relationship_id)
+            self._sync_child_factions(uow, current, relationship)
         return serialize_relationship(relationship)
 
     def delete(self, relationship_id: str) -> None:
         with self.uow_factory() as uow:
+            current = uow.relationships.find(relationship_id)
+            if not current:
+                raise NotFoundError("Связь не найдена.")
             if not uow.relationships.delete(relationship_id):
                 raise NotFoundError("Связь не найдена.")
+            self._sync_child_factions(uow, current, None)
+
+    @classmethod
+    def _is_child_faction(cls, relationship: Relationship | None) -> bool:
+        return bool(
+            relationship
+            and relationship.source.entity_type is EntityType.FACTIONS
+            and relationship.target.entity_type is EntityType.FACTIONS
+            and relationship.relation_label.strip().casefold() == cls.CHILD_FACTION_LABEL
+        )
+
+    @classmethod
+    def _sync_child_factions(
+        cls,
+        uow: UnitOfWork,
+        previous: Relationship | None,
+        current: Relationship | None,
+    ) -> None:
+        affected: set[EntityRef] = set()
+        if cls._is_child_faction(previous):
+            affected.add(previous.target)
+        if cls._is_child_faction(current):
+            parent = uow.records.find(current.source)
+            if not isinstance(parent, Faction) or parent.is_secondary:
+                raise ValidationError("Основной может быть только невторостепенная фракция.")
+            affected.add(current.target)
+            for relationship in uow.relationships.find_all():
+                if (
+                    relationship.id != current.id
+                    and cls._is_child_faction(relationship)
+                    and relationship.target == current.target
+                ):
+                    uow.relationships.delete(relationship.id)
+
+        relationships = uow.relationships.find_all()
+        for child_ref in affected:
+            child = uow.records.find(child_ref)
+            if not isinstance(child, Faction):
+                continue
+            parents = [
+                relationship
+                for relationship in relationships
+                if cls._is_child_faction(relationship) and relationship.target == child_ref
+            ]
+            chosen = max(parents, key=lambda item: (item.updated_at, item.id)) if parents else None
+            child.is_secondary = chosen is not None
+            child.main_faction_id = chosen.source.entity_id if chosen else ""
+            child.updated_at = utc_now()
+            child.system_tags = [
+                tag for tag in child.system_tags if tag.namespace != "field:mainFactionId"
+            ]
+            if chosen:
+                child.system_tags.append(
+                    SystemTag(
+                        namespace="field:mainFactionId",
+                        value=chosen.source.entity_id,
+                        label=getattr(uow.records.find(chosen.source), "name", chosen.source.entity_id),
+                    )
+                )
+            uow.records.save(child)
 
     @staticmethod
     def _ensure_endpoints(uow: UnitOfWork, source: EntityRef, target: EntityRef) -> None:

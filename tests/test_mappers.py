@@ -24,3 +24,16 @@ def test_every_entity_has_lossless_mapper(entity_type: EntityType) -> None:
     assert restored.id == envelope.id
     assert restored.payload["legacyField"] == {"kept": True}
 
+
+def test_character_classification_and_abilities_round_trip() -> None:
+    registry = create_default_mapper_registry()
+    envelope = RecordEnvelope(
+        entity_type=EntityType.CHARACTERS,
+        id="npc_1",
+        payload={"name": "Свидетель", "importance": "Высокая", "knownAbilities": ["Прорицание"]},
+        created_at="2026-01-01T00:00:00+00:00",
+        updated_at="2026-01-01T00:00:00+00:00",
+    )
+    restored = registry.to_record(registry.from_record(envelope)).payload
+    assert restored["importance"] == "Высокая"
+    assert restored["knownAbilities"] == ["Прорицание"]

@@ -1,8 +1,10 @@
 import type { AppStore } from "../application/store";
 import { OPTIONS, type EntityRegistry } from "../domain/registry";
 import { graphNodeVisual, regularPolygonPoints, starPoints, type GraphShape } from "../domain/graph-visuals";
-import { GraphStyleResolver, defaultGraphModeStyle } from "../domain/graph-style";
-import { reachableNodeKeys } from "../domain/graph-projection";
+import { activeGraphModeLayout } from "../domain/graph-layout-state";
+import { matchesGraphRecordFilters } from "../domain/graph-filter";
+import { GRAPH_CONTENT_TYPES, GRAPH_IMPORTANCE, GRAPH_UNCLASSIFIED, GraphStyleResolver, defaultGraphModeStyle, globalGraphStyleTargets, knownGraphSubtypes, type GraphStyleTarget } from "../domain/graph-style";
+import { collapseSecondaryFactionRelationships, reachableNodeKeys } from "../domain/graph-projection";
 import { relationshipColor } from "../domain/relationship-style";
 import { projectedSystemTagPaths } from "../domain/structured-tags";
 import {
@@ -13,6 +15,7 @@ import {
   type GraphLayout,
   type GraphModeStyle,
   type GraphMode,
+  type GraphModeLayout,
   type GraphNodePlacement,
   type Relationship,
 } from "../domain/types";
@@ -34,6 +37,7 @@ type RuntimeNode = SvgGraphNode & GraphNodePlacement & {
   labelSize: number;
   labelWeight: number;
   searchText: string;
+  mass: number;
 };
 
 export class GraphController {
@@ -45,15 +49,17 @@ export class GraphController {
   private depth = 2;
   private statuses = new Set<string>(OPTIONS.characterStatus);
   private entityTypes = new Set<EntityType>();
+  private importance = new Set<string>(GRAPH_IMPORTANCE);
+  private contentTypes = new Set<string>([...GRAPH_CONTENT_TYPES, GRAPH_UNCLASSIFIED]);
+  private collapseSecondaryFactions = false;
   private graphSearch = "";
-  private preferencesLayoutId = "";
+  private preferencesKey = "";
   private saveTimer = 0;
   private scene: SvgGraphScene | null = null;
   private contextMenu: HTMLElement | null = null;
   private contextDismissHandler: ((event: PointerEvent) => void) | null = null;
   private renderedNodes: RuntimeNode[] = [];
   private renderedRelationships: Relationship[] = [];
-  private readonly obsidianPositions = new Map<string, { x: number; y: number; pinned: boolean }>();
 
   constructor(
     private readonly store: AppStore,
@@ -71,24 +77,27 @@ export class GraphController {
     this.loadPreferences(layout);
     const modeStyle = this.modeStyle(layout, layout.mode);
     const allNodes = this.ensureNodes(layout, modeStyle);
-    const visibleKeys = this.visibleKeys(allNodes, layout.mode);
+    const allRelationships = this.projectedRelationships();
+    const visibleKeys = this.visibleKeys(allNodes, layout.mode, allRelationships);
     const nodes = allNodes.filter((node) => visibleKeys.has(node.key));
     const nodeKeys = new Set(nodes.map((node) => node.key));
-    const relationships = this.store.getState().snapshot.relationships.filter((edge) =>
+    const relationships = allRelationships.filter((edge) =>
       nodeKeys.has(entityKey(edge.sourceType, edge.sourceId)) && nodeKeys.has(entityKey(edge.targetType, edge.targetId)),
     );
     this.renderedNodes = nodes;
     this.renderedRelationships = relationships;
-    const customActions = layout.mode === "custom" ? `<button class="btn" data-action="open-graph-style">Настройка стиля</button><button class="btn" data-action="reset-graph-layout">Пересобрать</button>` : "";
+    const customActions = `<button class="btn" data-action="open-graph-style">Дефолтные стили</button>${layout.mode === "custom" ? `<button class="btn" data-action="reset-graph-layout">Пересобрать</button>` : ""}`;
+    const space = activeGraphModeLayout(layout, layout.mode);
     return `<header class="view-head graph-view-head"><div><h1>Граф связей</h1><p>${layout.mode === "obsidian" ? "Свободный граф: связанные узлы притягиваются, подписи автоматически освобождают место." : "Крупные узлы, фильтры, индивидуальные стили и закреплённые позиции."}</p></div><div class="toolbar"><div class="segmented-control" aria-label="Режим графа"><button class="${layout.mode === "custom" ? "active" : ""}" data-action="set-graph-mode" data-mode="custom">Настраиваемый</button><button class="${layout.mode === "obsidian" ? "active" : ""}" data-action="set-graph-mode" data-mode="obsidian">Obsidian</button></div><button class="btn" data-action="bookmark-graph">В закладки</button>${customActions}</div></header>
-      <div class="graph-layout graph-2d-layout"><div class="graph-wrap graph-2d-wrap" data-graph-wrap style="--graph-bg:${escapeAttr(modeStyle.backgroundColor)};--graph-grid:${escapeAttr(modeStyle.gridColor)};--graph-grid-opacity:${modeStyle.gridOpacity};--graph-edge-width:${modeStyle.edgeWidth};--graph-edge-opacity:${modeStyle.edgeOpacity};--graph-edge-label-size:${modeStyle.edgeLabelSize}px"><svg class="graph-svg" data-graph-svg viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" aria-label="Граф связей"><defs>${this.renderMarkers(relationships, modeStyle)}</defs><g data-graph-world transform="${this.worldTransform(layout)}">${this.renderEdges(relationships, nodes, modeStyle, layout.mode)}${nodes.map((node) => this.renderNode(node, layout.mode, modeStyle)).join("")}</g></svg><div class="graph-hint">Перетащите фон для перемещения, колесо для масштаба, узел — для фиксации позиции.${layout.mode === "obsidian" ? " Нажмите узел, чтобы выделить его окружение; ПКМ открывает действия." : ""}</div></div>${this.renderPanel(layout.mode, allNodes, relationships)}</div>`;
+      <div class="graph-layout graph-2d-layout"><div class="graph-wrap graph-2d-wrap" data-graph-wrap style="--graph-bg:${escapeAttr(modeStyle.backgroundColor)};--graph-grid:${escapeAttr(modeStyle.gridColor)};--graph-grid-opacity:${modeStyle.gridOpacity};--graph-edge-width:${modeStyle.edgeWidth};--graph-edge-opacity:${modeStyle.edgeOpacity};--graph-edge-label-size:${modeStyle.edgeLabelSize}px"><svg class="graph-svg" data-graph-svg viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" aria-label="Граф связей"><defs>${this.renderMarkers(relationships, modeStyle)}</defs><g data-graph-world transform="${this.worldTransform(space)}">${this.renderEdges(relationships, nodes, modeStyle, layout.mode)}${nodes.map((node) => this.renderNode(node, layout.mode, modeStyle)).join("")}</g></svg><div class="graph-hint">Перетащите фон для перемещения, колесо для масштаба, узел — для фиксации позиции.${layout.mode === "obsidian" ? " Нажмите узел, чтобы выделить его окружение; ПКМ открывает действия." : ""}</div></div>${this.renderPanel(layout.mode, allNodes, relationships)}</div>`;
   }
 
   bind(root: HTMLElement): void {
     const layout = this.layout();
     if (!layout) return;
     const modeStyle = this.modeStyle(layout, layout.mode);
-    this.scene = new SvgGraphScene(root, this.renderedNodes, this.renderedRelationships, layout.viewport, layout.mode, modeStyle.physics, {
+    const space = activeGraphModeLayout(layout, layout.mode);
+    this.scene = new SvgGraphScene(root, this.renderedNodes, this.renderedRelationships, space.viewport, layout.mode, modeStyle.physics, {
       onSelectNode: (key) => { this.selectedNodeKey = this.selectedNodeKey === key && layout.mode === "obsidian" ? "" : key; this.selectedEdgeId = ""; this.host.navigate("graph"); },
       onPreviewNode: (key) => {
         const ref = parseEntityKey(key);
@@ -96,16 +105,22 @@ export class GraphController {
       },
       onSelectEdge: (id) => { this.selectedEdgeId = id; this.selectedNodeKey = ""; this.host.navigate("graph"); },
       onContextNode: (key, clientX, clientY) => this.showContextMenu(root, key, clientX, clientY),
-      onMoveNode: (key, x, y) => layout.mode === "custom" ? this.moveNode(layout, key, x, y) : this.obsidianPositions.set(key, { x, y, pinned: true }),
-      onViewportChange: (viewport) => { layout.viewport = { ...viewport }; this.scheduleSave(layout); },
+      onMoveNode: (key, x, y) => this.moveNode(space, layout, key, x, y),
+      onViewportChange: (viewport) => { space.viewport = { ...viewport }; this.scheduleSave(layout); },
       onPositionsChanged: (nodes) => {
-        if (layout.mode === "custom") { this.syncPositions(layout, nodes); this.scheduleSave(layout); }
-        else for (const node of nodes) this.obsidianPositions.set(node.key, { x: node.x, y: node.y, pinned: node.pinned });
+        this.syncPositions(space, nodes);
+        this.scheduleSave(layout);
       },
     });
     this.scene.bind();
     this.bindGraphSearch(root);
     this.bindGraphFilters(root, layout, layout.mode === "custom");
+    root.querySelector<HTMLInputElement>("[data-obsidian-attraction]")?.addEventListener("change", (event) => {
+      layout.modeStyles.obsidian = this.styleResolver.mode(layout.modeStyles.obsidian, "obsidian");
+      layout.modeStyles.obsidian.physics.linkForce = Number((event.target as HTMLInputElement).value);
+      this.scheduleSave(layout);
+      this.host.navigate("graph");
+    });
     for (const input of root.querySelectorAll<HTMLInputElement>("[data-graph-node-style]")) input.addEventListener("change", () => this.updateSelectedNodeStyle(root));
     root.querySelector<HTMLSelectElement>("[data-graph-edge-arrow]")?.addEventListener("change", (event) => void this.updateSelectedEdge({ arrowDirection: (event.target as HTMLSelectElement).value as Relationship["arrowDirection"] }));
     root.querySelector<HTMLInputElement>("[data-graph-edge-color]")?.addEventListener("change", (event) => void this.updateSelectedEdge({ edgeColor: (event.target as HTMLInputElement).value }));
@@ -131,7 +146,7 @@ export class GraphController {
       }
       return true;
     }
-    if (action === "open-graph-style") { if (this.layout()?.mode === "custom") this.openStyleEditor(); return true; }
+    if (action === "open-graph-style") { this.openStyleEditor(); return true; }
     if (action === "reset-graph-layout") { if (this.layout()?.mode === "custom") await this.resetLayout(); return true; }
     if (action === "focus-graph-search" && element.dataset.key) {
       this.scene?.focusNode(element.dataset.key);
@@ -172,7 +187,7 @@ export class GraphController {
     }
     if (action === "reset-graph-node-style" && this.selectedNodeKey) {
       const layout = this.layout();
-      const placement = layout?.nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey);
+      const placement = layout ? activeGraphModeLayout(layout, layout.mode).nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey) : undefined;
       if (layout && placement) {
         delete placement.color; delete placement.textColor; delete placement.borderColor; placement.scale = 1;
         await this.saveLayout(layout);
@@ -182,7 +197,7 @@ export class GraphController {
     }
     if (action === "unpin-graph-node" && this.selectedNodeKey) {
       const layout = this.layout();
-      const placement = layout?.nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey);
+      const placement = layout ? activeGraphModeLayout(layout, layout.mode).nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey) : undefined;
       if (layout && placement) { placement.pinned = false; await this.saveLayout(layout); this.host.navigate("graph"); }
       return true;
     }
@@ -207,20 +222,28 @@ export class GraphController {
   }
 
   private loadPreferences(layout: GraphLayout): void {
-    if (this.preferencesLayoutId === layout.id) return;
-    this.preferencesLayoutId = layout.id;
-    this.focusKey = typeof layout.filters.focusKey === "string" ? layout.filters.focusKey : "";
-    this.depth = typeof layout.filters.depth === "number" ? layout.filters.depth : 2;
-    const statuses = Array.isArray(layout.filters.statuses) ? layout.filters.statuses.filter((item): item is string => typeof item === "string") : [];
+    const preferenceKey = `${layout.id}:${layout.mode}`;
+    if (this.preferencesKey === preferenceKey) return;
+    this.preferencesKey = preferenceKey;
+    const filters = this.modeFilters(layout, layout.mode);
+    this.focusKey = typeof filters.focusKey === "string" ? filters.focusKey : "";
+    this.depth = typeof filters.depth === "number" ? filters.depth : 2;
+    const statuses = Array.isArray(filters.statuses) ? filters.statuses.filter((item): item is string => typeof item === "string") : [];
     this.statuses = new Set(statuses.length ? statuses : OPTIONS.characterStatus);
-    const entityTypes = Array.isArray(layout.filters.entityTypes)
-      ? layout.filters.entityTypes.filter((item): item is EntityType => typeof item === "string" && this.registry.graphable().some((definition) => definition.type === item))
+    const entityTypes = Array.isArray(filters.entityTypes)
+      ? filters.entityTypes.filter((item): item is EntityType => typeof item === "string" && this.registry.graphable().some((definition) => definition.type === item))
       : this.registry.graphable().map((definition) => definition.type);
     this.entityTypes = new Set(entityTypes);
+    const importance = Array.isArray(filters.importance) ? filters.importance.filter((item): item is string => typeof item === "string") : [];
+    const contentTypes = Array.isArray(filters.contentTypes) ? filters.contentTypes.filter((item): item is string => typeof item === "string") : [];
+    this.importance = new Set(importance.length ? importance : GRAPH_IMPORTANCE);
+    this.contentTypes = new Set(contentTypes.length ? contentTypes : [...GRAPH_CONTENT_TYPES, GRAPH_UNCLASSIFIED]);
+    this.collapseSecondaryFactions = filters.collapseSecondaryFactions === true;
   }
 
   private ensureNodes(layout: GraphLayout, modeStyle: GraphModeStyle): RuntimeNode[] {
-    const placements = new Map(layout.nodes.map((node) => [entityKey(node.entity, node.id), node]));
+    const space = activeGraphModeLayout(layout, layout.mode);
+    const placements = new Map(space.nodes.map((node) => [entityKey(node.entity, node.id), node]));
     const graphRecords = this.registry.graphable().flatMap((definition) => this.store.records(definition.type).map((record) => ({ entity: definition.type, record })));
     const coterie = graphRecords.find((item) => item.entity === "coteries");
     const memberIds = new Set<string>();
@@ -235,18 +258,8 @@ export class GraphController {
       const { entity, record } = graphRecords[index]!;
       const key = entityKey(entity, record.id);
       let placement = placements.get(key);
-      if (!placement) { placement = this.initialPlacement(entity, record.id, index, graphRecords.length, memberIds); layout.nodes.push(placement); added = true; }
-      const obsidianPosition = this.obsidianPositions.get(key);
-      const runtimePlacement: GraphNodePlacement = layout.mode === "obsidian"
-        ? {
-            entity: placement.entity,
-            id: placement.id,
-            x: obsidianPosition?.x ?? placement.x,
-            y: obsidianPosition?.y ?? placement.y,
-            scale: 1,
-            pinned: obsidianPosition?.pinned ?? false,
-          }
-        : placement;
+      if (!placement) { placement = this.initialPlacement(entity, record.id, index, graphRecords.length, memberIds); space.nodes.push(placement); added = true; }
+      const runtimePlacement: GraphNodePlacement = placement;
       const definition = this.registry.get(entity);
       const title = definition.title(record);
       const structuredTags = projectedSystemTagPaths(
@@ -275,6 +288,7 @@ export class GraphController {
         fontFamily: resolved.fontFamily,
         labelSize: resolved.labelSize,
         labelWeight: resolved.labelWeight,
+        mass: resolved.mass,
       });
     }
     if (added) this.scheduleSave(layout);
@@ -293,17 +307,36 @@ export class GraphController {
     return { entity, id, x: GRAPH_WIDTH / 2 + Math.cos(angle) * ring, y: GRAPH_HEIGHT / 2 + Math.sin(angle) * ring, scale: 1, pinned: false };
   }
 
-  private visibleKeys(nodes: RuntimeNode[], mode: GraphMode): Set<string> {
+  private projectedRelationships(): Relationship[] {
+    const relationships = this.store.getState().snapshot.relationships;
+    if (!this.collapseSecondaryFactions) return relationships;
+    const direct = new Map<string, string>();
+    for (const faction of this.store.records("factions")) {
+      if (faction.isSecondary && typeof faction.mainFactionId === "string" && faction.mainFactionId) direct.set(faction.id, faction.mainFactionId);
+    }
+    const resolved = new Map<string, string>();
+    for (const id of direct.keys()) {
+      const visited = new Set([id]);
+      let target = direct.get(id) ?? id;
+      while (direct.has(target) && !visited.has(target)) { visited.add(target); target = direct.get(target)!; }
+      resolved.set(id, target);
+    }
+    return collapseSecondaryFactionRelationships(relationships, resolved);
+  }
+
+  private visibleKeys(nodes: RuntimeNode[], mode: GraphMode, relationships: Relationship[]): Set<string> {
     const knownStatuses = new Set<string>(OPTIONS.characterStatus);
     const allowed = new Set(nodes.filter((node) => {
       if (!this.entityTypes.has(node.entity)) return false;
+      if (this.collapseSecondaryFactions && node.entity === "factions" && node.record.isSecondary) return false;
+      if (!matchesGraphRecordFilters(node.entity, node.record, { importance: this.importance, contentTypes: this.contentTypes })) return false;
       if (mode === "obsidian") return true;
       if (node.entity !== "characters") return true;
       const status = asString(node.record.status);
       return !knownStatuses.has(status) || this.statuses.has(status);
     }).map((node) => node.key));
     if (!this.focusKey) return allowed;
-    const reached = reachableNodeKeys(this.store.getState().snapshot.relationships, this.focusKey, this.depth);
+    const reached = reachableNodeKeys(relationships, this.focusKey, this.depth);
     return new Set([...reached].filter((key) => allowed.has(key)));
   }
 
@@ -321,7 +354,7 @@ export class GraphController {
     const highlighted = new Set<string>();
     if (!this.selectedNodeKey) return highlighted;
     highlighted.add(this.selectedNodeKey);
-    for (const edge of this.store.getState().snapshot.relationships) {
+    for (const edge of this.renderedRelationships) {
       const source = entityKey(edge.sourceType, edge.sourceId);
       const target = entityKey(edge.targetType, edge.targetId);
       if (source === this.selectedNodeKey) highlighted.add(target);
@@ -373,11 +406,17 @@ export class GraphController {
   }
 
   private renderObsidianControls(nodes: RuntimeNode[]): string {
-    return `<h2>Obsidian-граф</h2>${this.renderGraphSearch()}${this.renderLocalGraphControls(nodes)}${this.renderGraphLegend()}`;
+    const attraction = this.modeStyle(this.layout()!, "obsidian").physics.linkForce;
+    return `<h2>Obsidian-граф</h2>${this.renderGraphSearch()}${this.renderLocalGraphControls(nodes)}${this.renderRecordFilters()}<label class="field"><span>Сила притяжения связанных узлов</span><input type="range" min="0" max="3" step="0.1" data-obsidian-attraction value="${attraction}"><small class="field-help">${attraction.toFixed(1)}</small></label>${this.renderGraphLegend()}`;
   }
 
   private renderCustomControls(nodes: RuntimeNode[]): string {
-    return `<h2>Фильтры</h2>${this.renderGraphSearch()}${this.renderLocalGraphControls(nodes)}<div><span class="field-label">Статусы персонажей</span><div class="graph-panel-list">${OPTIONS.characterStatus.map((status) => `<label class="check-pill"><input type="checkbox" data-graph-status value="${escapeAttr(status)}" ${this.statuses.has(status) ? "checked" : ""}>${escapeHtml(status)}</label>`).join("")}</div></div>${this.renderGraphLegend()}`;
+    return `<h2>Фильтры</h2>${this.renderGraphSearch()}${this.renderLocalGraphControls(nodes)}${this.renderRecordFilters()}<div><span class="field-label">Статусы персонажей</span><div class="graph-panel-list">${OPTIONS.characterStatus.map((status) => `<label class="check-pill"><input type="checkbox" data-graph-status value="${escapeAttr(status)}" ${this.statuses.has(status) ? "checked" : ""}>${escapeHtml(status)}</label>`).join("")}</div></div>${this.renderGraphLegend()}`;
+  }
+
+  private renderRecordFilters(): string {
+    const contentTypes = [...GRAPH_CONTENT_TYPES, GRAPH_UNCLASSIFIED];
+    return `<details class="graph-type-filter"><summary>Важность и назначение</summary><div class="graph-type-filter-menu"><span class="field-label">Важность всех объектов</span>${GRAPH_IMPORTANCE.map((value) => `<label class="check-pill"><input type="checkbox" data-graph-importance value="${escapeAttr(value)}" ${this.importance.has(value) ? "checked" : ""}>${escapeHtml(value)}</label>`).join("")}<span class="field-label">Тип материала событий и фактов</span>${contentTypes.map((value) => `<label class="check-pill"><input type="checkbox" data-graph-content-type value="${escapeAttr(value)}" ${this.contentTypes.has(value) ? "checked" : ""}>${escapeHtml(value)}</label>`).join("")}<label class="check-pill"><input type="checkbox" data-collapse-secondary-factions ${this.collapseSecondaryFactions ? "checked" : ""}>Сворачивать второстепенные фракции</label></div></details>`;
   }
 
   private renderGraphSearch(): string {
@@ -398,7 +437,7 @@ export class GraphController {
   }
 
   private renderNodeInspector(node: RuntimeNode, mode: GraphMode): string {
-    const styleControls = mode === "custom" ? `<label class="field"><span>Цвет узла</span><input type="color" data-graph-node-style data-style-key="color" value="${escapeAttr(node.color)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="color"]')}</label><label class="field"><span>Цвет текста</span><input type="color" data-graph-node-style data-style-key="textColor" value="${escapeAttr(node.textColor)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="textColor"]')}</label><label class="field"><span>Цвет контура</span><input type="color" data-graph-node-style data-style-key="borderColor" value="${escapeAttr(node.borderColor)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="borderColor"]')}</label><label class="field"><span>Размер</span><input type="range" min="60" max="220" step="5" data-graph-node-style data-style-key="scale" value="${Math.round((node.scale || 1) * 100)}"></label><button class="btn ghost" data-action="reset-graph-node-style">Сбросить стиль узла</button>` : "";
+    const styleControls = `<label class="field"><span>Цвет узла</span><input type="color" data-graph-node-style data-style-key="color" value="${escapeAttr(node.color)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="color"]')}</label><label class="field"><span>Цвет текста</span><input type="color" data-graph-node-style data-style-key="textColor" value="${escapeAttr(node.textColor)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="textColor"]')}</label><label class="field"><span>Цвет контура</span><input type="color" data-graph-node-style data-style-key="borderColor" value="${escapeAttr(node.borderColor)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="borderColor"]')}</label><label class="field"><span>Размер</span><input type="range" min="60" max="220" step="5" data-graph-node-style data-style-key="scale" value="${Math.round((node.scale || 1) * 100)}"></label><button class="btn ghost" data-action="reset-graph-node-style">Сбросить стиль узла</button>`;
     return `<section class="graph-inspector"><h3>${escapeHtml(node.title)}</h3><p class="tiny muted">${escapeHtml(node.subtitle)}${mode === "obsidian" && node.pinned ? " · закреплён" : ""}</p>${styleControls}<div class="toolbar"><button class="btn" data-action="preview-graph-node">Карточка</button><button class="btn" data-action="edit-graph-node">Редактировать</button><button class="btn" data-action="open-graph-node">Открыть полностью</button></div></section>`;
   }
 
@@ -412,7 +451,13 @@ export class GraphController {
   }
 
   private usedObjectColors(): string[] {
-    const layoutColors = this.store.records("graphLayouts").flatMap((record) => Array.isArray(record.nodes) ? record.nodes.map((node) => typeof node === "object" && node && "color" in node ? String(node.color || "") : "") : []);
+    const layoutColors = this.store.records("graphLayouts").flatMap((record) => {
+      const legacy = Array.isArray(record.nodes) ? record.nodes : [];
+      const spaces = record.modeLayouts && typeof record.modeLayouts === "object"
+        ? Object.values(record.modeLayouts as Record<string, { nodes?: unknown[] }>).flatMap((space) => Array.isArray(space.nodes) ? space.nodes : [])
+        : [];
+      return [...legacy, ...spaces].map((node) => typeof node === "object" && node && "color" in node ? String(node.color || "") : "");
+    });
     const boardColors = this.store.records("investigationBoards").flatMap((record) => Array.isArray(record.items) ? record.items.map((node) => typeof node === "object" && node && "color" in node ? String(node.color || "") : "") : []);
     return [...new Set(["#aeb6c2", "#62b5e5", "#8f1d2c", "#6f91c4", ...layoutColors, ...boardColors])]
       .filter((color) => /^#[0-9a-f]{6}$/i.test(color)).slice(0, 14);
@@ -467,6 +512,9 @@ export class GraphController {
     root.querySelector<HTMLSelectElement>("[data-graph-focus]")?.addEventListener("change", (event) => { this.focusKey = (event.target as HTMLSelectElement).value; this.savePreferences(layout); this.host.navigate("graph"); });
     root.querySelector<HTMLSelectElement>("[data-graph-depth]")?.addEventListener("change", (event) => { this.depth = Number((event.target as HTMLSelectElement).value); this.savePreferences(layout); this.host.navigate("graph"); });
     for (const checkbox of root.querySelectorAll<HTMLInputElement>("[data-graph-entity-type]")) checkbox.addEventListener("change", () => { if (checkbox.checked) this.entityTypes.add(checkbox.value as EntityType); else this.entityTypes.delete(checkbox.value as EntityType); this.savePreferences(layout); this.host.navigate("graph"); });
+    for (const checkbox of root.querySelectorAll<HTMLInputElement>("[data-graph-importance]")) checkbox.addEventListener("change", () => { if (checkbox.checked) this.importance.add(checkbox.value); else this.importance.delete(checkbox.value); this.savePreferences(layout); this.host.navigate("graph"); });
+    for (const checkbox of root.querySelectorAll<HTMLInputElement>("[data-graph-content-type]")) checkbox.addEventListener("change", () => { if (checkbox.checked) this.contentTypes.add(checkbox.value); else this.contentTypes.delete(checkbox.value); this.savePreferences(layout); this.host.navigate("graph"); });
+    root.querySelector<HTMLInputElement>("[data-collapse-secondary-factions]")?.addEventListener("change", (event) => { this.collapseSecondaryFactions = (event.target as HTMLInputElement).checked; this.savePreferences(layout); this.host.navigate("graph"); });
     if (includeStatuses) for (const checkbox of root.querySelectorAll<HTMLInputElement>("[data-graph-status]")) checkbox.addEventListener("change", () => { if (checkbox.checked) this.statuses.add(checkbox.value); else this.statuses.delete(checkbox.value); this.savePreferences(layout); this.host.navigate("graph"); });
   }
 
@@ -502,17 +550,30 @@ export class GraphController {
   }
 
   private savePreferences(layout: GraphLayout): void {
-    layout.filters = { ...layout.filters, focusKey: this.focusKey, depth: this.depth, statuses: [...this.statuses], entityTypes: [...this.entityTypes], spaceVersion: 2 };
+    const filters = { focusKey: this.focusKey, depth: this.depth, statuses: [...this.statuses], entityTypes: [...this.entityTypes], importance: [...this.importance], contentTypes: [...this.contentTypes], collapseSecondaryFactions: this.collapseSecondaryFactions };
+    const modeFilters = { ...((layout.filters.modeFilters as Record<string, unknown> | undefined) ?? {}), [layout.mode]: filters };
+    layout.filters = { ...layout.filters, modeFilters, spaceVersion: 3 };
     this.scheduleSave(layout);
   }
 
+  private modeFilters(layout: GraphLayout, mode: GraphMode): Record<string, unknown> {
+    const byMode = layout.filters.modeFilters;
+    if (byMode && typeof byMode === "object" && mode in byMode) return (byMode as Record<GraphMode, Record<string, unknown>>)[mode] ?? {};
+    return layout.filters;
+  }
+
   private modeStyle(layout: GraphLayout, mode: GraphMode): GraphModeStyle {
-    if (mode === "obsidian") return defaultGraphModeStyle("obsidian");
     layout.modeStyles ??= {
       custom: defaultGraphModeStyle("custom"),
       obsidian: defaultGraphModeStyle("obsidian"),
     };
-    const resolved = this.styleResolver.mode(layout.modeStyles[mode], mode);
+    if (mode === "obsidian") {
+      const fixed = defaultGraphModeStyle("obsidian");
+      fixed.physics.linkForce = Number(layout.modeStyles.obsidian?.physics?.linkForce ?? fixed.physics.linkForce);
+      fixed.entityTypeStyles = { ...(layout.modeStyles.custom?.entityTypeStyles ?? {}) };
+      return fixed;
+    }
+    const resolved = this.styleResolver.mode(layout.modeStyles.custom, "custom");
     layout.modeStyles[mode] = resolved;
     return resolved;
   }
@@ -554,8 +615,8 @@ export class GraphController {
     for (const button of root.querySelectorAll<HTMLButtonElement>("[data-style-reset-type]")) button.addEventListener("click", () => {
       this.collectAllStyles(root, styles);
       const targetMode: GraphMode = "custom";
-      const entity = button.dataset.entity as EntityType;
-      delete styles[targetMode].entityTypeStyles[entity];
+      const styleKey = button.dataset.styleKey ?? "";
+      delete styles[targetMode].entityTypeStyles[styleKey];
       this.modal.close();
       this.openStyleEditor(targetMode, styles);
     });
@@ -566,7 +627,9 @@ export class GraphController {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       this.collectAllStyles(root, styles);
-      layout.modeStyles = { custom: styles.custom, obsidian: defaultGraphModeStyle("obsidian") };
+      const obsidian = this.styleResolver.mode(layout.modeStyles.obsidian, "obsidian");
+      obsidian.entityTypeStyles = { ...styles.custom.entityTypeStyles };
+      layout.modeStyles = { custom: styles.custom, obsidian };
       this.modal.close();
       void this.saveLayout(layout).then(() => this.host.navigate("graph"));
     });
@@ -574,7 +637,11 @@ export class GraphController {
 
   private renderStylePane(mode: GraphMode, style: GraphModeStyle, active: boolean): string {
     const graphable = this.registry.graphable();
-    const firstType = graphable[0]?.type ?? "characters";
+    const targets: GraphStyleTarget[] = [...globalGraphStyleTargets(), ...graphable.flatMap((definition) => [
+      { key: definition.type, label: definition.label, entity: definition.type, recordPatch: {} },
+      ...knownGraphSubtypes(definition.type).map((target) => ({ ...target, label: `${definition.label} / ${target.label}` })),
+    ])];
+    const firstTarget = targets[0]?.key ?? "characters";
     const fonts = [
       "Inter, ui-sans-serif, system-ui, sans-serif",
       "Georgia, 'Times New Roman', serif",
@@ -604,26 +671,31 @@ export class GraphController {
         ${field("physics.repelForce", "Отталкивание", `<input type="number" min="0" max="3" step="0.1" data-mode-style="$key" value="${style.physics.repelForce}">`)}
         ${field("physics.centerForce", "Центрирование", `<input type="number" min="0" max="1" step="0.05" data-mode-style="$key" value="${style.physics.centerForce}">`)}
       </div></div>
-      <div class="style-section"><div class="panel-head"><h4>Стиль типа</h4><select data-style-type-select>${graphable.map((definition) => `<option value="${definition.type}">${escapeHtml(definition.label)}</option>`).join("")}</select></div>
-        ${graphable.map((definition, index) => this.renderTypeStylePane(mode, definition.type, definition.label, style, index === 0, firstType)).join("")}
+      <div class="style-section"><div class="panel-head"><h4>Дефолтный стиль типа и подтипа</h4><select data-style-type-select>${targets.map((target) => `<option value="${escapeAttr(target.key)}">${escapeHtml(target.label)}</option>`).join("")}</select></div>
+        ${targets.map((target) => this.renderTypeStylePane(mode, target, style, target.key === firstTarget)).join("")}
       </div>
     </section>`;
   }
 
-  private renderTypeStylePane(mode: GraphMode, entity: EntityType, label: string, modeStyle: GraphModeStyle, visible: boolean, _firstType: EntityType): string {
-    const current = modeStyle.entityTypeStyles[entity];
-    const fallbackPlacement: GraphNodePlacement = { entity, id: "preview", x: 0, y: 0, scale: 1, pinned: false };
-    const fallbackRecord = { id: "preview", createdAt: "", updatedAt: "" } as ChronicleRecord;
-    const fallback = this.styleResolver.node(entity, fallbackRecord, fallbackPlacement, { ...modeStyle, entityTypeStyles: {} });
+  private renderTypeStylePane(mode: GraphMode, target: GraphStyleTarget, modeStyle: GraphModeStyle, visible: boolean): string {
+    const current = modeStyle.entityTypeStyles[target.key];
+    const fallbackPlacement: GraphNodePlacement = { entity: target.entity, id: "preview", x: 0, y: 0, scale: 1, pinned: false };
+    const fallbackRecord = { id: "preview", createdAt: "", updatedAt: "", ...target.recordPatch } as ChronicleRecord;
+    const inheritedStyles = target.key === target.entity ? {} : { [target.entity]: modeStyle.entityTypeStyles[target.entity] ?? {} };
+    const fallback = this.styleResolver.node(target.entity, fallbackRecord, fallbackPlacement, { ...modeStyle, entityTypeStyles: inheritedStyles });
     const enabled = Boolean(current);
-    return `<div class="type-style-pane" data-style-type-pane="${entity}" ${visible ? "" : "hidden"}><div class="panel-head"><label class="check-pill"><input type="checkbox" data-style-type-enabled ${enabled ? "checked" : ""}>Собственные настройки: ${escapeHtml(label)}</label><button class="btn ghost small" type="button" data-style-reset-type data-mode="${mode}" data-entity="${entity}">Сбросить тип</button></div><div class="form-grid compact-grid">
+    const isImportance = target.key.startsWith("importance=");
+    const identityControls = isImportance ? "" : `
       <label class="field"><span>Цвет</span><input type="color" data-type-style-control data-type-style="color" value="${escapeAttr(current?.color || fallback.color)}" ${enabled ? "" : "disabled"}>${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-type-style="color"]')}</label>
-      <label class="field"><span>Контур</span><input type="color" data-type-style-control data-type-style="borderColor" value="${escapeAttr(current?.borderColor || fallback.borderColor)}" ${enabled ? "" : "disabled"}>${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-type-style="borderColor"]')}</label>
       <label class="field"><span>Текст</span><input type="color" data-type-style-control data-type-style="textColor" value="${escapeAttr(current?.textColor || fallback.textColor)}" ${enabled ? "" : "disabled"}>${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-type-style="textColor"]')}</label>
       <label class="field"><span>Шрифт</span><input data-type-style-control data-type-style="fontFamily" value="${escapeAttr(current?.fontFamily || modeStyle.fontFamily)}" ${enabled ? "" : "disabled"}></label>
       <label class="field"><span>Размер подписи</span><input type="number" min="7" max="32" data-type-style-control data-type-style="labelSize" value="${current?.labelSize || modeStyle.labelSize}" ${enabled ? "" : "disabled"}></label>
-      <label class="field"><span>Насыщенность</span><select data-type-style-control data-type-style="labelWeight" ${enabled ? "" : "disabled"}>${[400, 500, 600, 700, 800].map((weight) => `<option value="${weight}" ${(current?.labelWeight || modeStyle.labelWeight) === weight ? "selected" : ""}>${weight}</option>`).join("")}</select></label>
-      <label class="field"><span>Размер узла</span><input type="number" min="0.4" max="2.5" step="0.1" data-type-style-control data-type-style="scale" value="${current?.scale || 1}" ${enabled ? "" : "disabled"}></label>
+      <label class="field"><span>Насыщенность</span><select data-type-style-control data-type-style="labelWeight" ${enabled ? "" : "disabled"}>${[400, 500, 600, 700, 800].map((weight) => `<option value="${weight}" ${(current?.labelWeight || modeStyle.labelWeight) === weight ? "selected" : ""}>${weight}</option>`).join("")}</select></label>`;
+    return `<div class="type-style-pane" data-style-type-pane="${escapeAttr(target.key)}" ${visible ? "" : "hidden"}><div class="panel-head"><label class="check-pill"><input type="checkbox" data-style-type-enabled ${enabled ? "checked" : ""}>Собственные настройки: ${escapeHtml(target.label)}</label><button class="btn ghost small" type="button" data-style-reset-type data-mode="${mode}" data-style-key="${escapeAttr(target.key)}">Сбросить</button></div><div class="form-grid compact-grid">
+      <label class="field"><span>Контур</span><input type="color" data-type-style-control data-type-style="borderColor" value="${escapeAttr(current?.borderColor || fallback.borderColor)}" ${enabled ? "" : "disabled"}>${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-type-style="borderColor"]')}</label>
+      ${identityControls}
+      <label class="field"><span>Множитель размера узла</span><input type="number" min="0.4" max="4" step="0.1" data-type-style-control data-type-style="scale" value="${current?.scale || 1}" ${enabled ? "" : "disabled"}><small class="field-help">Последовательно умножается на размер типа и другие стилевые слои.</small></label>
+      <label class="field"><span>Множитель физической массы</span><input type="number" min="0.25" max="8" step="0.25" data-type-style-control data-type-style="mass" value="${current?.mass || 1}" ${enabled ? "" : "disabled"}><small class="field-help">Последовательно умножается; тяжёлый узел меньше смещается.</small></label>
     </div></div>`;
   }
 
@@ -658,10 +730,10 @@ export class GraphController {
         entityTypeStyles: {},
       };
       for (const typePane of pane.querySelectorAll<HTMLElement>("[data-style-type-pane]")) {
-        const entity = typePane.dataset.styleTypePane as EntityType;
+        const styleKey = typePane.dataset.styleTypePane ?? "";
         if (!typePane.querySelector<HTMLInputElement>("[data-style-type-enabled]")?.checked) continue;
         const control = (key: string) => typePane.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-type-style="${key}"]`);
-        styles[mode].entityTypeStyles[entity] = {
+        styles[mode].entityTypeStyles[styleKey] = {
           color: control("color")?.value,
           borderColor: control("borderColor")?.value,
           textColor: control("textColor")?.value,
@@ -669,21 +741,22 @@ export class GraphController {
           labelSize: Number(control("labelSize")?.value),
           labelWeight: Number(control("labelWeight")?.value),
           scale: Number(control("scale")?.value),
+          mass: Number(control("mass")?.value),
         };
       }
     }
   }
 
-  private moveNode(layout: GraphLayout, key: string, x: number, y: number): void {
-    const placement = layout.nodes.find((node) => entityKey(node.entity, node.id) === key);
+  private moveNode(space: GraphModeLayout, layout: GraphLayout, key: string, x: number, y: number): void {
+    const placement = space.nodes.find((node) => entityKey(node.entity, node.id) === key);
     if (!placement) return;
     placement.x = x; placement.y = y; placement.pinned = true;
     this.scheduleSave(layout);
   }
 
-  private syncPositions(layout: GraphLayout, nodes: SvgGraphNode[]): void {
+  private syncPositions(space: GraphModeLayout, nodes: SvgGraphNode[]): void {
     const byKey = new Map(nodes.map((node) => [node.key, node]));
-    for (const placement of layout.nodes) {
+    for (const placement of space.nodes) {
       const node = byKey.get(entityKey(placement.entity, placement.id));
       if (!node) continue;
       placement.x = node.x; placement.y = node.y;
@@ -693,7 +766,7 @@ export class GraphController {
   private updateSelectedNodeStyle(root: HTMLElement): void {
     const layout = this.layout();
     if (!layout || !this.selectedNodeKey) return;
-    const placement = layout.nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey);
+    const placement = activeGraphModeLayout(layout, layout.mode).nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey);
     if (!placement) return;
     for (const input of root.querySelectorAll<HTMLInputElement>("[data-graph-node-style]")) {
       const key = input.dataset.styleKey;
@@ -716,22 +789,23 @@ export class GraphController {
   private async resetLayout(): Promise<void> {
     const layout = this.layout();
     if (!layout || layout.mode !== "custom") return;
-    for (let index = 0; index < layout.nodes.length; index += 1) {
-      const node = layout.nodes[index]!;
+    const space = activeGraphModeLayout(layout, "custom");
+    for (let index = 0; index < space.nodes.length; index += 1) {
+      const node = space.nodes[index]!;
       if (node.entity === "coteries") { node.x = GRAPH_WIDTH / 2; node.y = GRAPH_HEIGHT / 2; node.pinned = true; continue; }
-      const angle = index / Math.max(1, layout.nodes.length) * Math.PI * 2;
+      const angle = index / Math.max(1, space.nodes.length) * Math.PI * 2;
       const ring = 230 + index % 3 * 48;
       node.x = GRAPH_WIDTH / 2 + Math.cos(angle) * ring;
       node.y = GRAPH_HEIGHT / 2 + Math.sin(angle) * ring;
       node.pinned = false;
     }
-    layout.viewport = { x: 0, y: 0, zoom: 1 };
+    space.viewport = { x: 0, y: 0, zoom: 1 };
     await this.saveLayout(layout);
     this.host.navigate("graph");
   }
 
-  private worldTransform(layout: GraphLayout): string {
-    return `translate(${layout.viewport.x} ${layout.viewport.y}) scale(${layout.viewport.zoom})`;
+  private worldTransform(space: GraphModeLayout): string {
+    return `translate(${space.viewport.x} ${space.viewport.y}) scale(${space.viewport.zoom})`;
   }
 
   private scheduleSave(layout: GraphLayout): void {
@@ -740,7 +814,8 @@ export class GraphController {
   }
 
   private async saveLayout(layout: GraphLayout): Promise<void> {
-    try { await this.gateway.updateRecord("graphLayouts", layout.id, { nodes: layout.nodes, viewport: layout.viewport, mode: layout.mode, filters: layout.filters, modeStyles: layout.modeStyles }); }
+    const custom = activeGraphModeLayout(layout, "custom");
+    try { await this.gateway.updateRecord("graphLayouts", layout.id, { nodes: custom.nodes, viewport: custom.viewport, mode: layout.mode, filters: layout.filters, modeStyles: layout.modeStyles, modeLayouts: layout.modeLayouts }); }
     catch (error) { this.toast.show(error instanceof Error ? error.message : "Не удалось сохранить граф", "error"); }
   }
 

@@ -3,6 +3,37 @@ import type { ChronicleRecord, EntityType, GraphEntityTypeStyle, GraphMode, Grap
 
 const FONT_SANS = "Inter, ui-sans-serif, system-ui, sans-serif";
 
+export const GRAPH_IMPORTANCE = ["Высокая", "Обычная", "Низкая"] as const;
+export const GRAPH_CONTENT_TYPES = ["Сюжетное", "Личное", "Лорное"] as const;
+export const GRAPH_UNCLASSIFIED = "Без типа";
+export const GRAPH_SECTS = ["Камарилья", "Шабаш", "Анархи", "Не известно"] as const;
+
+export interface GraphStyleTarget {
+  key: string;
+  label: string;
+  entity: EntityType;
+  recordPatch: Record<string, unknown>;
+}
+
+export function knownGraphSubtypes(entity: EntityType): readonly GraphStyleTarget[] {
+  if (entity === "factions") return GRAPH_SECTS.map((sect) => ({
+    key: `${entity}::sect=${sect}`,
+    label: `Секта: ${sect}`,
+    entity,
+    recordPatch: { sect },
+  }));
+  return [];
+}
+
+export function globalGraphStyleTargets(): readonly GraphStyleTarget[] {
+  return GRAPH_IMPORTANCE.map((importance) => ({
+    key: `importance=${importance}`,
+    label: `Важность: ${importance}`,
+    entity: "characters" as const,
+    recordPatch: { importance },
+  }));
+}
+
 const ENTITY_COLORS: Partial<Record<EntityType, string>> = {
   coteries: "#62b5e5",
   factions: "#8f1d2c",
@@ -43,6 +74,7 @@ export interface ResolvedGraphNodeStyle {
   labelSize: number;
   labelWeight: number;
   scale: number;
+  mass: number;
 }
 
 export class GraphStyleResolver {
@@ -66,21 +98,27 @@ export class GraphStyleResolver {
     contextColor = "",
   ): ResolvedGraphNodeStyle {
     const typeStyle: GraphEntityTypeStyle = modeStyle.entityTypeStyles[entity] ?? {};
+    const sect = entity === "factions" ? String(record.sect || "Не известно") : "";
+    const sectStyle: GraphEntityTypeStyle = sect ? modeStyle.entityTypeStyles[`${entity}::sect=${sect}`] ?? {} : {};
+    const importance = String(record.importance || "Обычная");
+    const importanceStyle: GraphEntityTypeStyle = modeStyle.entityTypeStyles[`importance=${importance}`] ?? {};
+    const resolvedTypeStyle = { ...typeStyle, ...sectStyle };
     const dispositionColor = entity === "characters" || entity === "factions"
       ? this.dispositions.read(record)?.color
       : undefined;
     const locationColor = entity === "locations"
       ? (record.level === "Город" ? "#c8a85a" : "#aeb6c2")
       : undefined;
-    const color = placement.color || contextColor || dispositionColor || typeStyle.color || locationColor || ENTITY_COLORS[entity] || "#4f5665";
+    const color = placement.color || contextColor || dispositionColor || sectStyle.color || typeStyle.color || locationColor || ENTITY_COLORS[entity] || "#4f5665";
     return {
       color,
-      textColor: placement.textColor || typeStyle.textColor || "#f4f4f2",
-      borderColor: placement.borderColor || typeStyle.borderColor || (entity === "coteries" ? "#c8a85a" : "#7d6a47"),
-      fontFamily: typeStyle.fontFamily || modeStyle.fontFamily,
-      labelSize: typeStyle.labelSize || modeStyle.labelSize,
-      labelWeight: typeStyle.labelWeight || modeStyle.labelWeight,
-      scale: Math.max(0.35, Math.min(3, (placement.scale || 1) * modeStyle.nodeScale * (typeStyle.scale || 1))),
+      textColor: placement.textColor || resolvedTypeStyle.textColor || "#f4f4f2",
+      borderColor: placement.borderColor || importanceStyle.borderColor || resolvedTypeStyle.borderColor || (entity === "coteries" ? "#c8a85a" : "#7d6a47"),
+      fontFamily: resolvedTypeStyle.fontFamily || modeStyle.fontFamily,
+      labelSize: resolvedTypeStyle.labelSize || modeStyle.labelSize,
+      labelWeight: resolvedTypeStyle.labelWeight || modeStyle.labelWeight,
+      scale: Math.max(0.35, Math.min(8, (placement.scale || 1) * modeStyle.nodeScale * (typeStyle.scale || 1) * (sectStyle.scale || 1) * (importanceStyle.scale || 1))),
+      mass: Math.max(0.25, Math.min(32, (typeStyle.mass || 1) * (sectStyle.mass || 1) * (importanceStyle.mass || 1))),
     };
   }
 }

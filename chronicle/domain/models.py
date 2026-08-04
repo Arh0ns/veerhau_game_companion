@@ -107,6 +107,7 @@ class Coterie(ChronicleEntity):
     description: str = ""
     goals: str = ""
     haven: str = ""
+    importance: str = ""
     notes: str = ""
     tags: list[str] = field(default_factory=list)
     aliases: list[str] = field(default_factory=list)
@@ -121,6 +122,8 @@ class Character(ChronicleEntity):
     vampire_clan: str = ""
     garou_tribe: str = ""
     status: str = ""
+    importance: str = ""
+    known_abilities: list[str] = field(default_factory=list)
     description: str = ""
     notes: str = ""
     tags: list[str] = field(default_factory=list)
@@ -133,8 +136,12 @@ class Faction(ChronicleEntity):
     entity_type: ClassVar[EntityType] = EntityType.FACTIONS
     name: str = ""
     faction_type: str = ""
+    sect: str = ""
+    importance: str = ""
     description: str = ""
     goals: str = ""
+    is_secondary: bool = False
+    main_faction_id: str = ""
     notes: str = ""
     tags: list[str] = field(default_factory=list)
     aliases: list[str] = field(default_factory=list)
@@ -149,6 +156,7 @@ class Location(ChronicleEntity):
     parent_city_id: str = ""
     sect: str = ""
     faction_id: str = ""
+    importance: str = ""
     description: str = ""
     notes: str = ""
     tags: list[str] = field(default_factory=list)
@@ -162,6 +170,8 @@ class ChronicleEvent(ChronicleEntity):
     description: str = ""
     game_date: str = ""
     game_time: str = ""
+    importance: str = ""
+    content_type: str = ""
     city_id: str = ""
     place_id: str = ""
     consequence: str = ""
@@ -176,6 +186,8 @@ class Fact(ChronicleEntity):
     statement: str = ""
     source: str = ""
     reliability: str = ""
+    importance: str = ""
+    content_type: str = ""
     event_id: str = ""
     attached_relationship_ids: list[str] = field(default_factory=list)
     notes: str = ""
@@ -191,6 +203,7 @@ class Clue(ChronicleEntity):
     clue_type: str = ""
     source: str = ""
     reliability: str = ""
+    importance: str = ""
     event_id: str = ""
     discovered_by_ids: list[str] = field(default_factory=list)
     attached_relationship_ids: list[str] = field(default_factory=list)
@@ -205,6 +218,7 @@ class Storyline(ChronicleEntity):
     title: str = ""
     description: str = ""
     status: str = ""
+    importance: str = ""
     open_questions: str = ""
     notes: str = ""
     tags: list[str] = field(default_factory=list)
@@ -217,6 +231,7 @@ class Theory(ChronicleEntity):
     title: str = ""
     author_id: str = ""
     status: str = ""
+    importance: str = ""
     description: str = ""
     attached_relationship_ids: list[str] = field(default_factory=list)
     notes: str = ""
@@ -229,6 +244,7 @@ class BoardNote(ChronicleEntity):
     entity_type: ClassVar[EntityType] = EntityType.NOTES
     title: str = ""
     author_id: str = ""
+    importance: str = ""
     text: str = ""
     attached_relationship_ids: list[str] = field(default_factory=list)
     notes: str = ""
@@ -318,6 +334,7 @@ class GraphLayout(ChronicleEntity):
     mode: str = "custom"
     filters: JsonObject = field(default_factory=dict)
     mode_styles: JsonObject = field(default_factory=dict)
+    mode_layouts: JsonObject = field(default_factory=dict)
 
 
 @dataclass(slots=True, kw_only=True)

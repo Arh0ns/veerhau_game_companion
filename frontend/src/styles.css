@@ -572,6 +572,32 @@ textarea:focus {
   grid-column: 1 / -1;
 }
 
+.form-grid .checkbox-field {
+  display: flex;
+  align-items: center;
+  align-self: end;
+  gap: 10px;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(23, 26, 33, 0.55);
+}
+
+.form-grid .checkbox-field input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+}
+
+.form-grid .checkbox-field > span {
+  min-width: 0;
+  color: var(--text);
+  line-height: 1.25;
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: 210px minmax(0, 1fr);

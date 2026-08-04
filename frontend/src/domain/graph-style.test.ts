@@ -31,4 +31,46 @@ describe("GraphStyleResolver", () => {
     expect(resolver.node("locations", { id: "city", level: "Город", createdAt: "", updatedAt: "" }, locationPlacement, defaultGraphModeStyle("custom")).color).toBe("#c8a85a");
     expect(resolver.node("locations", { id: "place", level: "Место в городе", createdAt: "", updatedAt: "" }, locationPlacement, defaultGraphModeStyle("custom")).color).toBe("#aeb6c2");
   });
+
+  it("multiplies the global importance layer over the entity style", () => {
+    const style = defaultGraphModeStyle("custom");
+    style.entityTypeStyles.factions = { scale: 2, mass: 1.5 };
+    style.entityTypeStyles["importance=Высокая"] = { scale: 1.5, mass: 2 };
+    const resolved = new GraphStyleResolver().node(
+      "factions",
+      { id: "faction", importance: "Высокая", createdAt: "", updatedAt: "" },
+      { ...placement, entity: "factions" },
+      style,
+    );
+    expect(resolved.scale).toBe(3);
+    expect(resolved.mass).toBe(3);
+  });
+
+  it("uses importance only for border, scale and mass", () => {
+    const style = defaultGraphModeStyle("custom");
+    style.entityTypeStyles["importance=Высокая"] = {
+      color: "#123456",
+      textColor: "#654321",
+      borderColor: "#abcdef",
+      labelSize: 24,
+    };
+    const resolved = new GraphStyleResolver().node("characters", { ...record, importance: "Высокая" }, placement, style);
+    expect(resolved.color).toBe("#2f8f5b");
+    expect(resolved.textColor).toBe("#f4f4f2");
+    expect(resolved.borderColor).toBe("#abcdef");
+    expect(resolved.labelSize).toBe(style.labelSize);
+  });
+
+  it("uses faction sect styles instead of location sect styles", () => {
+    const style = defaultGraphModeStyle("custom");
+    style.entityTypeStyles["factions::sect=Камарилья"] = { scale: 1.25, color: "#445566" };
+    const resolved = new GraphStyleResolver().node(
+      "factions",
+      { id: "court", sect: "Камарилья", createdAt: "", updatedAt: "" },
+      { ...placement, entity: "factions" },
+      style,
+    );
+    expect(resolved.scale).toBe(1.25);
+    expect(resolved.color).toBe("#445566");
+  });
 });

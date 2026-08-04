@@ -1,5 +1,24 @@
 import { entityKey, type Relationship } from "./types";
 
+export function collapseSecondaryFactionRelationships(
+  relationships: Relationship[],
+  mainFactionBySecondary: ReadonlyMap<string, string>,
+): Relationship[] {
+  const projected: Relationship[] = [];
+  const seen = new Set<string>();
+  for (const relationship of relationships) {
+    const sourceId = relationship.sourceType === "factions" ? mainFactionBySecondary.get(relationship.sourceId) ?? relationship.sourceId : relationship.sourceId;
+    const targetId = relationship.targetType === "factions" ? mainFactionBySecondary.get(relationship.targetId) ?? relationship.targetId : relationship.targetId;
+    if (relationship.sourceType === relationship.targetType && sourceId === targetId) continue;
+    const pair = [entityKey(relationship.sourceType, sourceId), entityKey(relationship.targetType, targetId)].sort().join("|");
+    const dedupeKey = `${pair}|${relationship.relationLabel}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    projected.push({ ...relationship, sourceId, targetId });
+  }
+  return projected;
+}
+
 export function reachableNodeKeys(
   relationships: readonly Relationship[],
   focusKey: string,
@@ -22,4 +41,3 @@ export function reachableNodeKeys(
   }
   return reached;
 }
-

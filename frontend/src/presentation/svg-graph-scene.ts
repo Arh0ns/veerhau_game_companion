@@ -10,6 +10,15 @@ export interface SvgGraphNode {
   subtitle: string;
   searchText?: string;
   labelSize?: number;
+  mass?: number;
+}
+
+function nodeMass(node: SvgGraphNode): number {
+  return Math.max(0.25, Math.min(8, node.mass ?? 1));
+}
+
+export function weightedGraphForce(component: number, influenced: SvgGraphNode, influencer: SvgGraphNode): number {
+  return component * nodeMass(influencer) / nodeMass(influenced);
 }
 
 export interface SvgGraphCallbacks {
@@ -199,8 +208,10 @@ export class SvgGraphScene {
         const fy = dy / distance * strength;
         const sourceForce = forceFor(edge.source.key);
         const targetForce = forceFor(edge.target.key);
-        sourceForce.x += fx; sourceForce.y += fy;
-        targetForce.x -= fx; targetForce.y -= fy;
+        sourceForce.x += weightedGraphForce(fx, edge.source, edge.target);
+        sourceForce.y += weightedGraphForce(fy, edge.source, edge.target);
+        targetForce.x -= weightedGraphForce(fx, edge.target, edge.source);
+        targetForce.y -= weightedGraphForce(fy, edge.target, edge.source);
       }
       const collisionNodes = this.mode === "custom" ? this.nodes.filter((node) => degree.has(node.key)) : this.nodes;
       for (let index = 0; index < collisionNodes.length; index += 1) {
@@ -219,16 +230,18 @@ export class SvgGraphScene {
           const fy = dy / distance * strength;
           const firstForce = forceFor(first.key);
           const secondForce = forceFor(second.key);
-          firstForce.x -= fx; firstForce.y -= fy;
-          secondForce.x += fx; secondForce.y += fy;
+          firstForce.x -= weightedGraphForce(fx, first, second);
+          firstForce.y -= weightedGraphForce(fy, first, second);
+          secondForce.x += weightedGraphForce(fx, second, first);
+          secondForce.y += weightedGraphForce(fy, second, first);
         }
       }
       for (const node of this.nodes) {
         const force = forces.get(node.key);
         if (node.pinned) continue;
         const center = Math.max(0, this.physics.centerForce);
-        const centerX = (WIDTH / 2 - node.x) * 0.0025 * center;
-        const centerY = (HEIGHT / 2 - node.y) * 0.0025 * center;
+        const centerX = (WIDTH / 2 - node.x) * 0.0025 * center / nodeMass(node);
+        const centerY = (HEIGHT / 2 - node.y) * 0.0025 * center / nodeMass(node);
         const fx = (force?.x ?? 0) + centerX;
         const fy = (force?.y ?? 0) + centerY;
         if (!fx && !fy) continue;

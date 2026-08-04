@@ -1,5 +1,6 @@
 import type { AppStore } from "../application/store";
 import { SearchIndex, type SearchDocument } from "../domain/knowledge-search";
+import { activeGraphModeLayout } from "../domain/graph-layout-state";
 import type { EntityRegistry } from "../domain/registry";
 import { projectedSystemTagPaths } from "../domain/structured-tags";
 import { type ChronicleRecord, type EntityType, type GraphLayout } from "../domain/types";
@@ -79,7 +80,7 @@ export class KnowledgeController {
     if (action === "save-search") { this.openSavedSearchForm(); return true; }
     if (action === "bookmark-search") { await this.createBookmark("Поиск: " + this.store.getState().search, "search", { query: this.store.getState().search }); return true; }
     if (action === "bookmark-entity" && element.dataset.entity && element.dataset.id) { await this.createBookmark(element.dataset.title || "Объект", "entity", { entity: element.dataset.entity, id: element.dataset.id }); return true; }
-    if (action === "bookmark-graph") { const layout = this.store.records("graphLayouts")[0] as GraphLayout | undefined; if (layout) await this.createBookmark(`Граф: ${layout.mode === "custom" ? "Настраиваемый" : "Obsidian"}`, "graph", { mode: layout.mode, filters: layout.filters, viewport: layout.viewport }); return true; }
+    if (action === "bookmark-graph") { const layout = this.store.records("graphLayouts")[0] as GraphLayout | undefined; if (layout) await this.createBookmark(`Граф: ${layout.mode === "custom" ? "Настраиваемый" : "Obsidian"}`, "graph", { mode: layout.mode, filters: layout.filters, viewport: activeGraphModeLayout(layout, layout.mode).viewport }); return true; }
     if (action === "bookmark-board" && element.dataset.id) { await this.createBookmark(element.dataset.title || "Доска", "board", { id: element.dataset.id }); return true; }
     if (action === "open-bookmark" && element.dataset.id) { await this.openBookmark(element.dataset.id); return true; }
     if (action === "delete-support-record" && element.dataset.entity && element.dataset.id) { await this.gateway.delete(element.dataset.entity as EntityType, element.dataset.id); await this.host.reload(); return true; }
