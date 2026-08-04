@@ -104,6 +104,7 @@ const definitions: EntityDefinition[] = [
       { key: "faction", label: "Фракция", kind: "relationshipSet", entity: "factions", relationLabel: "член", currentRole: "target" },
       { key: "description", label: "Описание", kind: "textarea", wide: true },
       { key: "notes", label: "Заметки", kind: "textarea", wide: true },
+      { key: "relatedEvents", label: "Связанные события", kind: "relationshipSet", entity: "events", relationLabel: "связано", currentRole: "source", wide: true },
     ], title: fallbackTitle, summary: (r) => value(r, "description") || value(r, "notes"),
   },
   {
@@ -146,7 +147,7 @@ const definitions: EntityDefinition[] = [
       { key: "contentType", label: "Тип материала", kind: "select", options: OPTIONS.contentType },
       { key: "cityId", label: "Город", kind: "ref", entity: "locations", filter: (r) => value(r, "level") === "Город" },
       { key: "placeId", label: "Место", kind: "ref", entity: "locations", filter: (r) => value(r, "level") === "Место в городе" },
-      { key: "participants", label: "Участники", kind: "relationshipSet", entity: "characters", relationLabel: "участник", currentRole: "source", wide: true },
+      { key: "relatedCharacters", label: "Связанные персонажи", kind: "relationshipSet", entity: "characters", relationLabel: "связано", currentRole: "target", wide: true },
       { key: "description", label: "Описание", kind: "textarea", wide: true },
       { key: "consequence", label: "Последствия", kind: "textarea", wide: true },
       { key: "notes", label: "Заметки", kind: "textarea", wide: true },

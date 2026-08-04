@@ -598,6 +598,11 @@ textarea:focus {
   line-height: 1.25;
 }
 
+.relationship-create-target {
+  justify-self: start;
+  width: auto;
+}
+
 .detail-grid {
   display: grid;
   grid-template-columns: 210px minmax(0, 1fr);

@@ -251,7 +251,7 @@ export class EntityController {
       <form data-relationship-form>
         <div class="form-grid">
           <label class="field"><span>Тип объекта</span><select name="targetType" ${relationship || fixedTarget ? "disabled" : ""}></select></label>
-          <label class="field"><span>Объект</span><select name="targetId" ${relationship || fixedTarget ? "disabled" : ""}></select></label>
+          <label class="field"><span>Объект</span><select name="targetId" ${relationship || fixedTarget ? "disabled" : ""}></select><button class="btn small ghost relationship-create-target" type="button" data-create-target hidden>Создать</button></label>
           <label class="field"><span>Название связи</span><select name="labelPreset"></select></label>
           <label class="field" data-custom-label hidden><span>Своё название</span><input name="customLabel" placeholder="Введите название связи"></label>
           <label class="field wide"><span>Подробности</span><textarea name="notes">${escapeHtml(draft?.notes ?? relationship?.notes ?? "")}</textarea></label>
@@ -266,6 +266,7 @@ export class EntityController {
     if (!form) return;
     const targetTypeSelect = form.elements.namedItem("targetType") as HTMLSelectElement;
     const targetIdSelect = form.elements.namedItem("targetId") as HTMLSelectElement;
+    const createTargetButton = form.querySelector<HTMLButtonElement>("[data-create-target]");
     const labelSelect = form.elements.namedItem("labelPreset") as HTMLSelectElement;
     const customInput = form.elements.namedItem("customLabel") as HTMLInputElement;
     const customRow = form.querySelector<HTMLElement>("[data-custom-label]");
@@ -289,6 +290,7 @@ export class EntityController {
       const createOption = relationship || fixedTarget ? "" : `<option value="__new__">＋ Новый объект…</option>`;
       targetIdSelect.innerHTML = createOption + this.store.records(targetType).filter((record) => !(targetType === sourceType && record.id === sourceId)).map((record) => `<option value="${escapeAttr(record.id)}">${escapeHtml(definition.title(record))}</option>`).join("");
       if (currentTargetId) targetIdSelect.value = currentTargetId;
+      if (createTargetButton) createTargetButton.hidden = targetIdSelect.value !== "__new__";
       updateLabels();
     };
     const updateLabels = () => {
@@ -307,6 +309,9 @@ export class EntityController {
     };
     targetTypeSelect.addEventListener("change", updateTargets);
     targetIdSelect.addEventListener("change", () => {
+      if (createTargetButton) createTargetButton.hidden = targetIdSelect.value !== "__new__";
+    });
+    createTargetButton?.addEventListener("click", () => {
       if (targetIdSelect.value !== "__new__") return;
       const targetType = targetTypeSelect.value as EntityType;
       const relationLabel = labelSelect.value === "__custom" ? customInput.value.trim() : labelSelect.value;

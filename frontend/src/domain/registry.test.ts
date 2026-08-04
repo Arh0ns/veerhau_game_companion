@@ -36,4 +36,24 @@ describe("entity registry policies", () => {
     expect(registry.get("factions").fields.find((field) => field.key === "mainFactionId")?.entity).toBe("factions");
     expect(registry.get("factions").fields.find((field) => field.key === "sect")?.options).toEqual(["Камарилья", "Шабаш", "Анархи", "Не известно"]);
   });
+
+  it("uses one character-to-event relationship from both entity forms", () => {
+    const registry = new EntityRegistry();
+    const characterEvents = registry.get("characters").fields.find((field) => field.key === "relatedEvents");
+    const eventCharacters = registry.get("events").fields.find((field) => field.key === "relatedCharacters");
+
+    expect(characterEvents).toMatchObject({
+      kind: "relationshipSet",
+      entity: "events",
+      relationLabel: "связано",
+      currentRole: "source",
+    });
+    expect(eventCharacters).toMatchObject({
+      kind: "relationshipSet",
+      entity: "characters",
+      relationLabel: "связано",
+      currentRole: "target",
+    });
+    expect(registry.get("events").fields.some((field) => field.key === "participants")).toBe(false);
+  });
 });
