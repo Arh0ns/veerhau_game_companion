@@ -22,9 +22,47 @@ jobs:
 
             cd /home/other/veerhau/veerhau_game_companion
 
+            database_path="data/chronicle.db"
+            database_backup="/home/other/veerhau/chronicle.db.deploy-backup"
+            service_stopped=0
+
+            restore_database() {
+              if [ -f "$database_backup" ]; then
+                mkdir -p data
+                mv -f "$database_backup" "$database_path"
+              fi
+            }
+
+            cleanup() {
+              exit_code=$?
+              trap - EXIT
+              restore_database
+              if [ "$service_stopped" -eq 1 ]; then
+                systemctl start veerhau || true
+              fi
+              exit "$exit_code"
+            }
+
+            trap cleanup EXIT
+
+            if [ ! -f "$database_path" ]; then
+              echo "Server database is missing: $database_path"
+              exit 1
+            fi
+
+            echo "Stopping application before preserving its database..."
+            systemctl stop veerhau
+            service_stopped=1
+
+            echo "Preserving the current server database..."
+            cp "$database_path" "$database_backup"
+
             echo "Updating repository..."
             git fetch origin
             git reset --hard origin/main
+
+            echo "Restoring the current server database..."
+            restore_database
 
             echo "Installing Python dependencies..."
             source venv/bin/activate
@@ -38,9 +76,8 @@ jobs:
 
             echo "Restarting service..."
             systemctl restart veerhau
-
-            echo "Checking service..."
-            systemctl restart veerhau
+            service_stopped=0
+            trap - EXIT
 
             echo "Waiting for application..."
             
