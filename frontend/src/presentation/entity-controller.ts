@@ -228,8 +228,9 @@ export class EntityController {
     const record = this.store.record(entity, id);
     if (!record) return;
     const definition = this.registry.get(entity);
+    const description = asString(record.description).trim();
     const fields = definition.fields
-      .filter((field) => field.kind !== "relationshipSet")
+      .filter((field) => field.kind !== "relationshipSet" && field.key !== "description")
       .map((field) => this.renderFieldValue(field, record))
       .filter(Boolean)
       .slice(0, 6)
@@ -237,7 +238,8 @@ export class EntityController {
     const root = this.modal.open(definition.title(record), `
       <div class="record-preview">
         <div class="card-kicker">${escapeHtml(definition.singular)}</div>
-        ${fields ? `<dl class="detail-list">${fields}</dl>` : `<p class="muted">${escapeHtml(definition.summary(record)) || "Описание пока не заполнено."}</p>`}
+        <section class="record-preview-description"><h3>Описание</h3><p class="${description ? "" : "muted"}">${escapeHtml(description) || "Описание пока не заполнено."}</p></section>
+        ${fields ? `<dl class="detail-list">${fields}</dl>` : ""}
         <div class="modal-actions">
           <button class="btn ghost" type="button" data-preview-edit>Изменить</button>
           <button class="btn primary" type="button" data-preview-open>Открыть полностью</button>
@@ -311,7 +313,13 @@ export class EntityController {
       const targetType = targetTypeSelect.value as EntityType;
       const presets = [...new Set([
         ...this.labels.presets(sourceType, targetType),
-        ...this.store.getState().snapshot.relationships.map((item) => item.relationLabel.trim()).filter(Boolean),
+        ...this.store.getState().snapshot.relationships
+          .filter((item) => (
+            (item.sourceType === sourceType && item.targetType === targetType)
+            || (item.sourceType === targetType && item.targetType === sourceType)
+          ))
+          .map((item) => item.relationLabel.trim())
+          .filter(Boolean),
       ])];
       const currentLabel = draft?.relationLabel || relationship?.relationLabel || presets[0] || "связано";
       const mode = presets.includes(currentLabel) ? currentLabel : "__custom";

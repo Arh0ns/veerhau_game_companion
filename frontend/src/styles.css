@@ -838,6 +838,11 @@ textarea:focus {
   stroke-dasharray: 5 3;
 }
 
+.graph-node.city-node.pinned .graph-node-shape,
+.graph-node.city-node.pinned circle {
+  stroke-dasharray: none;
+}
+
 .graph-node-label {
   fill: var(--node-text-color, var(--text));
   pointer-events: none;
@@ -932,6 +937,16 @@ textarea:focus {
   max-height: min(58vh, 560px);
   overflow: auto;
 }
+
+.record-preview-description {
+  margin: 14px 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.record-preview-description h3,
+.record-preview-description p { margin: 0; }
+.record-preview-description p { margin-top: 7px; white-space: pre-wrap; }
 
 .graph-legend {
   display: grid;
@@ -2382,7 +2397,68 @@ textarea:focus {
 
 /* Relationship graph controls */
 .graph-view-head {
+  align-items: flex-start;
+}
+
+.graph-head-actions {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+  min-width: min(100%, 640px);
+}
+
+.graph-filter-templates {
+  display: grid;
+  gap: 8px;
+  width: min(100%, 640px);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(17, 19, 24, .88);
+}
+
+.graph-filter-template-head,
+.graph-filter-template-controls,
+.graph-filter-template-editor {
+  display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.graph-filter-template-head {
+  justify-content: space-between;
+}
+
+.graph-filter-template-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.graph-filter-template-controls select {
+  flex: 1 1 190px;
+  min-width: 0;
+}
+
+.graph-filter-template-editor {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.graph-filter-template-editor label {
+  display: grid;
+  flex: 1 1 220px;
+  gap: 5px;
+  min-width: 0;
+}
+
+.graph-filter-template-editor label span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.graph-filter-template-editor > .field-help {
+  flex-basis: 100%;
 }
 
 .segmented-control {
@@ -2537,6 +2613,8 @@ textarea:focus {
   }
 
   .graph-style-modal { width: calc(100vw - 20px); }
+  .graph-head-actions,
+  .graph-filter-templates { width: 100%; justify-items: stretch; }
 }
 
 @media (max-width: 600px) {

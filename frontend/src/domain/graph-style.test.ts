@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GraphStyleResolver, defaultGraphModeStyle } from "./graph-style";
+import { CITY_SECT_BORDER_COLORS, GraphStyleResolver, defaultGraphModeStyle } from "./graph-style";
 import type { ChronicleRecord, GraphNodePlacement } from "./types";
 
 const placement: GraphNodePlacement = { entity: "characters", id: "npc", x: 0, y: 0, scale: 1, pinned: false };
@@ -30,6 +30,29 @@ describe("GraphStyleResolver", () => {
     const locationPlacement = { ...placement, entity: "locations" as const };
     expect(resolver.node("locations", { id: "city", level: "Город", createdAt: "", updatedAt: "" }, locationPlacement, defaultGraphModeStyle("custom")).color).toBe("#c8a85a");
     expect(resolver.node("locations", { id: "place", level: "Место в городе", createdAt: "", updatedAt: "" }, locationPlacement, defaultGraphModeStyle("custom")).color).toBe("#aeb6c2");
+  });
+
+  it("colors city borders by sect", () => {
+    const resolver = new GraphStyleResolver();
+    const locationPlacement = { ...placement, entity: "locations" as const };
+    for (const [sect, borderColor] of Object.entries(CITY_SECT_BORDER_COLORS)) {
+      expect(resolver.node(
+        "locations",
+        { id: sect, level: "Город", sect, importance: "Высокая", createdAt: "", updatedAt: "" },
+        locationPlacement,
+        defaultGraphModeStyle("custom"),
+      ).borderColor).toBe(borderColor);
+    }
+  });
+
+  it("keeps an individual city border color as the strongest override", () => {
+    const resolved = new GraphStyleResolver().node(
+      "locations",
+      { id: "city", level: "Город", sect: "Шабаш", createdAt: "", updatedAt: "" },
+      { ...placement, entity: "locations", borderColor: "#abcdef" },
+      defaultGraphModeStyle("custom"),
+    );
+    expect(resolved.borderColor).toBe("#abcdef");
   });
 
   it("multiplies the global importance layer over the entity style", () => {

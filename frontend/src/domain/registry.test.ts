@@ -37,6 +37,16 @@ describe("entity registry policies", () => {
     expect(registry.get("factions").fields.find((field) => field.key === "sect")?.options).toEqual(["Камарилья", "Шабаш", "Анархи", "Не известно"]);
   });
 
+  it("provides a description section for every graph card", () => {
+    const registry = new EntityRegistry();
+    for (const definition of registry.graphable()) {
+      expect(definition.fields.find((field) => field.key === "description")).toMatchObject({
+        kind: "textarea",
+        label: "Описание",
+      });
+    }
+  });
+
   it("uses one character-to-event relationship from both entity forms", () => {
     const registry = new EntityRegistry();
     const characterEvents = registry.get("characters").fields.find((field) => field.key === "relatedEvents");

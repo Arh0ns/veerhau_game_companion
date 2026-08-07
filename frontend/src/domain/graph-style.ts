@@ -45,6 +45,12 @@ const ENTITY_COLORS: Partial<Record<EntityType, string>> = {
   clues: "#9b7b35",
 };
 
+export const CITY_SECT_BORDER_COLORS: Readonly<Record<string, string>> = {
+  "Камарилья": "#3f78b5",
+  "Шабаш": "#b23a48",
+  "Анархи": "#737982",
+};
+
 export function defaultGraphModeStyle(mode: GraphMode): GraphModeStyle {
   return {
     fontFamily: FONT_SANS,
@@ -109,11 +115,14 @@ export class GraphStyleResolver {
     const locationColor = entity === "locations"
       ? (record.level === "Город" ? "#c8a85a" : "#aeb6c2")
       : undefined;
+    const citySectBorderColor = entity === "locations" && record.level === "Город"
+      ? CITY_SECT_BORDER_COLORS[String(record.sect || "")]
+      : undefined;
     const color = placement.color || contextColor || dispositionColor || sectStyle.color || typeStyle.color || locationColor || ENTITY_COLORS[entity] || "#4f5665";
     return {
       color,
       textColor: placement.textColor || resolvedTypeStyle.textColor || "#f4f4f2",
-      borderColor: placement.borderColor || importanceStyle.borderColor || resolvedTypeStyle.borderColor || (entity === "coteries" ? "#c8a85a" : "#7d6a47"),
+      borderColor: placement.borderColor || citySectBorderColor || importanceStyle.borderColor || resolvedTypeStyle.borderColor || (entity === "coteries" ? "#c8a85a" : "#7d6a47"),
       fontFamily: resolvedTypeStyle.fontFamily || modeStyle.fontFamily,
       labelSize: resolvedTypeStyle.labelSize || modeStyle.labelSize,
       labelWeight: resolvedTypeStyle.labelWeight || modeStyle.labelWeight,

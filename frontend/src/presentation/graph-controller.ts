@@ -40,6 +40,24 @@ type RuntimeNode = SvgGraphNode & GraphNodePlacement & {
   mass: number;
 };
 
+interface GraphFilterSettings {
+  focusKey: string;
+  depth: number;
+  statuses: string[];
+  entityTypes: EntityType[];
+  importance: string[];
+  contentTypes: string[];
+  collapseSecondaryFactions: boolean;
+}
+
+interface GraphFilterTemplate {
+  id: string;
+  name: string;
+  mode: GraphMode;
+  filters: GraphFilterSettings;
+  layout?: GraphModeLayout;
+}
+
 export class GraphController {
   private readonly styleResolver = new GraphStyleResolver();
   private selectedNodeKey = "";
@@ -52,6 +70,7 @@ export class GraphController {
   private importance = new Set<string>(GRAPH_IMPORTANCE);
   private contentTypes = new Set<string>([...GRAPH_CONTENT_TYPES, GRAPH_UNCLASSIFIED]);
   private collapseSecondaryFactions = false;
+  private readonly openFilterPanels = new Set<number>();
   private graphSearch = "";
   private preferencesKey = "";
   private saveTimer = 0;
@@ -60,6 +79,8 @@ export class GraphController {
   private contextDismissHandler: ((event: PointerEvent) => void) | null = null;
   private renderedNodes: RuntimeNode[] = [];
   private renderedRelationships: Relationship[] = [];
+  private lastNodeClick = { key: "", at: 0 };
+  private filterTemplateEditor: { mode: GraphMode; templateId: string; name: string; savePlacement: boolean } | null = null;
 
   constructor(
     private readonly store: AppStore,
@@ -87,8 +108,8 @@ export class GraphController {
     this.renderedNodes = nodes;
     this.renderedRelationships = relationships;
     const customActions = `<button class="btn" data-action="open-graph-style">Дефолтные стили</button>${layout.mode === "custom" ? `<button class="btn" data-action="reset-graph-layout">Пересобрать</button>` : ""}`;
-    const space = activeGraphModeLayout(layout, layout.mode);
-    return `<header class="view-head graph-view-head"><div><h1>Граф связей</h1><p>${layout.mode === "obsidian" ? "Свободный граф: связанные узлы притягиваются, подписи автоматически освобождают место." : "Крупные узлы, фильтры, индивидуальные стили и закреплённые позиции."}</p></div><div class="toolbar"><div class="segmented-control" aria-label="Режим графа"><button class="${layout.mode === "custom" ? "active" : ""}" data-action="set-graph-mode" data-mode="custom">Настраиваемый</button><button class="${layout.mode === "obsidian" ? "active" : ""}" data-action="set-graph-mode" data-mode="obsidian">Obsidian</button></div><button class="btn" data-action="bookmark-graph">В закладки</button>${customActions}</div></header>
+    const space = this.activeGraphSpace(layout);
+    return `<header class="view-head graph-view-head"><div><h1>Граф связей</h1><p>${layout.mode === "obsidian" ? "Свободный граф: связанные узлы притягиваются, подписи автоматически освобождают место." : "Крупные узлы, фильтры, индивидуальные стили и закреплённые позиции."}</p></div><div class="graph-head-actions"><div class="toolbar"><div class="segmented-control" aria-label="Режим графа"><button class="${layout.mode === "custom" ? "active" : ""}" data-action="set-graph-mode" data-mode="custom">Настраиваемый</button><button class="${layout.mode === "obsidian" ? "active" : ""}" data-action="set-graph-mode" data-mode="obsidian">Obsidian</button></div><button class="btn" data-action="bookmark-graph">В закладки</button>${customActions}</div>${this.renderFilterTemplateBlock(layout)}</div></header>
       <div class="graph-layout graph-2d-layout"><div class="graph-wrap graph-2d-wrap" data-graph-wrap style="--graph-bg:${escapeAttr(modeStyle.backgroundColor)};--graph-grid:${escapeAttr(modeStyle.gridColor)};--graph-grid-opacity:${modeStyle.gridOpacity};--graph-edge-width:${modeStyle.edgeWidth};--graph-edge-opacity:${modeStyle.edgeOpacity};--graph-edge-label-size:${modeStyle.edgeLabelSize}px"><svg class="graph-svg" data-graph-svg viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" aria-label="Граф связей"><defs>${this.renderMarkers(relationships, modeStyle)}</defs><g data-graph-world transform="${this.worldTransform(space)}">${this.renderEdges(relationships, nodes, modeStyle, layout.mode)}${nodes.map((node) => this.renderNode(node, layout.mode, modeStyle)).join("")}</g></svg><div class="graph-hint">Перетащите фон для перемещения, колесо для масштаба.${layout.mode === "obsidian" ? " Перетащите узел, чтобы перестроить связанное окружение; после отпускания он остаётся свободным. Нажмите узел, чтобы выделить его окружение; ПКМ открывает действия." : " Перетащите узел, чтобы закрепить его позицию."}</div></div>${this.renderPanel(layout.mode, allNodes, relationships)}</div>`;
   }
 
@@ -96,9 +117,9 @@ export class GraphController {
     const layout = this.layout();
     if (!layout) return;
     const modeStyle = this.modeStyle(layout, layout.mode);
-    const space = activeGraphModeLayout(layout, layout.mode);
+    const space = this.activeGraphSpace(layout);
     this.scene = new SvgGraphScene(root, this.renderedNodes, this.renderedRelationships, space.viewport, layout.mode, modeStyle.physics, {
-      onSelectNode: (key) => { this.selectedNodeKey = this.selectedNodeKey === key && layout.mode === "obsidian" ? "" : key; this.selectedEdgeId = ""; this.host.navigate("graph"); },
+      onSelectNode: (key) => this.handleNodeClick(key, layout.mode),
       onPreviewNode: (key) => {
         const ref = parseEntityKey(key);
         this.entities.openRecordPreview(ref.entityType, ref.entityId);
@@ -115,6 +136,7 @@ export class GraphController {
     this.scene.bind();
     this.bindGraphSearch(root);
     this.bindGraphFilters(root, layout, layout.mode === "custom");
+    this.bindFilterTemplates(root, layout);
     root.querySelector<HTMLInputElement>("[data-obsidian-attraction]")?.addEventListener("change", (event) => {
       layout.modeStyles.obsidian = this.styleResolver.mode(layout.modeStyles.obsidian, "obsidian");
       layout.modeStyles.obsidian.physics.linkForce = Number((event.target as HTMLInputElement).value);
@@ -141,9 +163,50 @@ export class GraphController {
       const mode = element.dataset.mode as GraphMode | undefined;
       if (layout && (mode === "custom" || mode === "obsidian")) {
         layout.mode = mode;
+        this.filterTemplateEditor = null;
         await this.saveLayout(layout);
         this.host.navigate("graph");
       }
+      return true;
+    }
+    if (action === "create-filter-template") {
+      const layout = this.layout();
+      if (layout) {
+        this.filterTemplateEditor = { mode: layout.mode, templateId: "", name: "", savePlacement: false };
+        this.host.navigate("graph");
+      }
+      return true;
+    }
+    if (action === "edit-filter-template") {
+      const layout = this.layout();
+      if (layout) {
+        const activeId = this.activeFilterTemplateId(layout, layout.mode);
+        const template = this.filterTemplates(layout).find((item) => item.id === activeId && item.mode === layout.mode);
+        if (template) {
+          this.filterTemplateEditor = { mode: layout.mode, templateId: template.id, name: template.name, savePlacement: Boolean(template.layout) };
+          this.host.navigate("graph");
+        }
+      }
+      return true;
+    }
+    if (action === "cancel-filter-template") {
+      this.filterTemplateEditor = null;
+      this.host.navigate("graph");
+      return true;
+    }
+    if (action === "toggle-filter-template-layout") {
+      if (this.filterTemplateEditor) {
+        this.filterTemplateEditor.savePlacement = !this.filterTemplateEditor.savePlacement;
+        this.host.navigate("graph");
+      }
+      return true;
+    }
+    if (action === "save-filter-template") {
+      await this.saveFilterTemplate();
+      return true;
+    }
+    if (action === "clear-graph-filters") {
+      await this.clearGraphFilters();
       return true;
     }
     if (action === "open-graph-style") { this.openStyleEditor(); return true; }
@@ -197,7 +260,7 @@ export class GraphController {
     }
     if (action === "unpin-graph-node" && this.selectedNodeKey) {
       const layout = this.layout();
-      const placement = layout ? activeGraphModeLayout(layout, layout.mode).nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey) : undefined;
+      const placement = layout ? this.activeGraphSpace(layout).nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey) : undefined;
       if (layout && placement) { placement.pinned = false; await this.saveLayout(layout); this.host.navigate("graph"); }
       return true;
     }
@@ -225,25 +288,14 @@ export class GraphController {
     const preferenceKey = `${layout.id}:${layout.mode}`;
     if (this.preferencesKey === preferenceKey) return;
     this.preferencesKey = preferenceKey;
-    const filters = this.modeFilters(layout, layout.mode);
-    this.focusKey = typeof filters.focusKey === "string" ? filters.focusKey : "";
-    this.depth = typeof filters.depth === "number" ? filters.depth : 2;
-    const statuses = Array.isArray(filters.statuses) ? filters.statuses.filter((item): item is string => typeof item === "string") : [];
-    this.statuses = new Set(statuses.length ? statuses : OPTIONS.characterStatus);
-    const entityTypes = Array.isArray(filters.entityTypes)
-      ? filters.entityTypes.filter((item): item is EntityType => typeof item === "string" && this.registry.graphable().some((definition) => definition.type === item))
-      : this.registry.graphable().map((definition) => definition.type);
-    this.entityTypes = new Set(entityTypes);
-    const importance = Array.isArray(filters.importance) ? filters.importance.filter((item): item is string => typeof item === "string") : [];
-    const contentTypes = Array.isArray(filters.contentTypes) ? filters.contentTypes.filter((item): item is string => typeof item === "string") : [];
-    this.importance = new Set(importance.length ? importance : GRAPH_IMPORTANCE);
-    this.contentTypes = new Set(contentTypes.length ? contentTypes : [...GRAPH_CONTENT_TYPES, GRAPH_UNCLASSIFIED]);
-    this.collapseSecondaryFactions = filters.collapseSecondaryFactions === true;
+    this.applyFilterSettings(this.normalizeFilterSettings(this.modeFilters(layout, layout.mode)));
   }
 
   private ensureNodes(layout: GraphLayout, modeStyle: GraphModeStyle): RuntimeNode[] {
-    const space = activeGraphModeLayout(layout, layout.mode);
+    const space = this.activeGraphSpace(layout);
+    const mainSpace = activeGraphModeLayout(layout, layout.mode);
     const placements = new Map(space.nodes.map((node) => [entityKey(node.entity, node.id), node]));
+    const mainPlacements = new Map(mainSpace.nodes.map((node) => [entityKey(node.entity, node.id), node]));
     const graphRecords = this.registry.graphable().flatMap((definition) => this.store.records(definition.type).map((record) => ({ entity: definition.type, record })));
     const coterie = graphRecords.find((item) => item.entity === "coteries");
     const memberIds = new Set<string>();
@@ -258,8 +310,20 @@ export class GraphController {
     for (let index = 0; index < graphRecords.length; index += 1) {
       const { entity, record } = graphRecords[index]!;
       const key = entityKey(entity, record.id);
+      let stylePlacement = mainPlacements.get(key);
+      if (!stylePlacement) {
+        stylePlacement = this.initialPlacement(entity, record.id, index, graphRecords.length, memberIds);
+        mainSpace.nodes.push(stylePlacement);
+        mainPlacements.set(key, stylePlacement);
+        added = true;
+      }
       let placement = placements.get(key);
-      if (!placement) { placement = this.initialPlacement(entity, record.id, index, graphRecords.length, memberIds); space.nodes.push(placement); added = true; }
+      if (!placement) {
+        placement = space === mainSpace ? stylePlacement : { entity, id: record.id, x: stylePlacement.x, y: stylePlacement.y, scale: 1, pinned: stylePlacement.pinned };
+        if (space !== mainSpace) space.nodes.push(placement);
+        placements.set(key, placement);
+        added = true;
+      }
       const shouldBePinned = layout.mode === "obsidian" ? false : placement.pinned;
       if (placement.pinned !== shouldBePinned) { placement.pinned = shouldBePinned; pinStateChanged = true; }
       const runtimePlacement: GraphNodePlacement = placement;
@@ -273,7 +337,7 @@ export class GraphController {
         (targetEntity, targetId) => this.title(targetEntity, targetId),
       );
       const contextColor = entity === "coteries" || (entity === "characters" && memberIds.has(record.id)) ? "#62b5e5" : "";
-      const resolved = this.styleResolver.node(entity, record, runtimePlacement, modeStyle, contextColor);
+      const resolved = this.styleResolver.node(entity, record, stylePlacement, modeStyle, contextColor);
       const locationVariant = entity === "locations" && asString(record.level) === "Город" ? "city" : "";
       const visual = graphNodeVisual(entity, layout.mode, resolved.scale, locationVariant);
       result.push({
@@ -346,11 +410,12 @@ export class GraphController {
   private renderNode(node: RuntimeNode, mode: GraphMode, modeStyle: GraphModeStyle): string {
     const selected = node.key === this.selectedNodeKey;
     const dimmed = mode === "obsidian" && this.selectedNodeKey && !this.highlightedNodeKeys().has(node.key);
+    const city = node.entity === "locations" && asString(node.record.level) === "Город";
     const shape = this.renderShape(node.shape, node.radius);
     const label = mode === "custom"
       ? `<text class="graph-node-label custom-node-label" text-anchor="middle" y="4">${escapeHtml(truncate(node.title, 22))}</text>`
       : `<text class="graph-node-label obsidian-node-label" x="${node.radius + 6}" y="4">${escapeHtml(truncate(node.title, 34))}</text>`;
-    return `<g class="graph-node ${mode === "obsidian" ? "obsidian-node" : "custom-node"} ${selected ? "selected" : ""} ${dimmed ? "focus-dimmed" : ""} ${node.pinned ? "pinned" : ""} ${modeStyle.labelOutline ? "label-outline" : ""}" data-graph-node data-key="${escapeAttr(node.key)}" data-entity="${node.entity}" transform="translate(${node.x},${node.y})" style="--node-color:${escapeAttr(node.color)};--node-text-color:${escapeAttr(node.textColor)};--node-border-color:${escapeAttr(node.borderColor)};--node-font:${escapeAttr(node.fontFamily)};--node-label-size:${node.labelSize}px;--node-label-weight:${node.labelWeight};--node-label-style:${modeStyle.labelItalic ? "italic" : "normal"}">${shape}${label}<title>${escapeHtml(`${node.subtitle}: ${node.title}`)}</title></g>`;
+    return `<g class="graph-node ${mode === "obsidian" ? "obsidian-node" : "custom-node"} ${city ? "city-node" : ""} ${selected ? "selected" : ""} ${dimmed ? "focus-dimmed" : ""} ${node.pinned ? "pinned" : ""} ${modeStyle.labelOutline ? "label-outline" : ""}" data-graph-node data-key="${escapeAttr(node.key)}" data-entity="${node.entity}" transform="translate(${node.x},${node.y})" style="--node-color:${escapeAttr(node.color)};--node-text-color:${escapeAttr(node.textColor)};--node-border-color:${escapeAttr(node.borderColor)};--node-font:${escapeAttr(node.fontFamily)};--node-label-size:${node.labelSize}px;--node-label-weight:${node.labelWeight};--node-label-style:${modeStyle.labelItalic ? "italic" : "normal"}">${shape}${label}<title>${escapeHtml(`${node.subtitle}: ${node.title}`)}</title></g>`;
   }
 
   private highlightedNodeKeys(): Set<string> {
@@ -364,6 +429,20 @@ export class GraphController {
       if (target === this.selectedNodeKey) highlighted.add(source);
     }
     return highlighted;
+  }
+
+  private handleNodeClick(key: string, mode: GraphMode): void {
+    const now = Date.now();
+    if (this.lastNodeClick.key === key && now - this.lastNodeClick.at <= 450) {
+      this.lastNodeClick = { key: "", at: 0 };
+      const ref = parseEntityKey(key);
+      this.entities.openRecordPreview(ref.entityType, ref.entityId);
+      return;
+    }
+    this.lastNodeClick = { key, at: now };
+    this.selectedNodeKey = this.selectedNodeKey === key && mode === "obsidian" ? "" : key;
+    this.selectedEdgeId = "";
+    this.host.navigate("graph");
   }
 
   private renderShape(shape: GraphShape, radius: number): string {
@@ -406,6 +485,24 @@ export class GraphController {
     const selectedEdge = relationships.find((edge) => edge.id === this.selectedEdgeId) ?? this.relationship(this.selectedEdgeId);
     const controls = mode === "obsidian" ? this.renderObsidianControls(allNodes) : this.renderCustomControls(allNodes);
     return `<aside class="graph-panel"><section>${controls}</section>${selectedNode ? this.renderNodeInspector(selectedNode, mode) : ""}${selectedEdge ? this.renderEdgeInspector(selectedEdge) : `<div class="graph-inspector subtle"><p class="muted">${mode === "obsidian" ? "Нажмите на узел, чтобы выделить его окружение, или на связь для настройки." : "Выберите узел или связь для настройки."}</p></div>`}</aside>`;
+  }
+
+  private renderFilterTemplateBlock(layout: GraphLayout): string {
+    const templates = this.filterTemplates(layout).filter((template) => template.mode === layout.mode);
+    const activeId = this.activeFilterTemplateId(layout, layout.mode);
+    const active = templates.find((template) => template.id === activeId);
+    const editor = this.filterTemplateEditor?.mode === layout.mode ? this.filterTemplateEditor : null;
+    const editorLabel = editor?.templateId ? "Редактирование шаблона" : "Новый шаблон";
+    return `<section class="graph-filter-templates" aria-label="Шаблоны фильтрации">
+      <div class="graph-filter-template-head"><strong>Шаблоны фильтрации</strong><span>Текущий: ${escapeHtml(active?.name ?? "без шаблона")} · ${active?.layout ? "индивидуальное размещение" : "основной граф"}</span></div>
+      <div class="graph-filter-template-controls">
+        <select data-graph-filter-template aria-label="Выбрать шаблон"><option value="">Выберите шаблон…</option>${templates.map((template) => `<option value="${escapeAttr(template.id)}" ${template.id === activeId ? "selected" : ""}>${escapeHtml(template.name)}</option>`).join("")}</select>
+        <button class="btn small" data-action="create-filter-template">Новый</button>
+        <button class="btn small ghost" data-action="edit-filter-template" ${active ? "" : "disabled"}>Редактировать</button>
+        <button class="btn small ghost" data-action="clear-graph-filters">Очистить фильтрацию</button>
+      </div>
+      ${editor ? `<div class="graph-filter-template-editor"><label><span>${editorLabel}</span><input data-filter-template-name value="${escapeAttr(editor.name)}" placeholder="Название шаблона" maxlength="80"></label><button class="btn small ${editor.savePlacement ? "primary" : "ghost"}" data-action="toggle-filter-template-layout" aria-pressed="${editor.savePlacement}">Сохранить размещение</button><button class="btn small primary" data-action="save-filter-template">Сохранить шаблон</button><button class="btn small ghost" data-action="cancel-filter-template">Отмена</button><small class="field-help">${editor.savePlacement ? "Будет использоваться индивидуальная расстановка узлов." : "Будет использоваться расстановка основного графа."}</small></div>` : ""}
+    </section>`;
   }
 
   private renderObsidianControls(nodes: RuntimeNode[]): string {
@@ -512,6 +609,13 @@ export class GraphController {
   }
 
   private bindGraphFilters(root: HTMLElement, layout: GraphLayout, includeStatuses: boolean): void {
+    const panels = [...root.querySelectorAll<HTMLDetailsElement>(".graph-type-filter")];
+    panels.forEach((panel, index) => {
+      panel.open = this.openFilterPanels.has(index);
+      panel.addEventListener("toggle", () => {
+        if (panel.open) this.openFilterPanels.add(index); else this.openFilterPanels.delete(index);
+      });
+    });
     root.querySelector<HTMLSelectElement>("[data-graph-focus]")?.addEventListener("change", (event) => { this.focusKey = (event.target as HTMLSelectElement).value; this.savePreferences(layout); this.host.navigate("graph"); });
     root.querySelector<HTMLSelectElement>("[data-graph-depth]")?.addEventListener("change", (event) => { this.depth = Number((event.target as HTMLSelectElement).value); this.savePreferences(layout); this.host.navigate("graph"); });
     for (const checkbox of root.querySelectorAll<HTMLInputElement>("[data-graph-entity-type]")) checkbox.addEventListener("change", () => { if (checkbox.checked) this.entityTypes.add(checkbox.value as EntityType); else this.entityTypes.delete(checkbox.value as EntityType); this.savePreferences(layout); this.host.navigate("graph"); });
@@ -519,6 +623,21 @@ export class GraphController {
     for (const checkbox of root.querySelectorAll<HTMLInputElement>("[data-graph-content-type]")) checkbox.addEventListener("change", () => { if (checkbox.checked) this.contentTypes.add(checkbox.value); else this.contentTypes.delete(checkbox.value); this.savePreferences(layout); this.host.navigate("graph"); });
     root.querySelector<HTMLInputElement>("[data-collapse-secondary-factions]")?.addEventListener("change", (event) => { this.collapseSecondaryFactions = (event.target as HTMLInputElement).checked; this.savePreferences(layout); this.host.navigate("graph"); });
     if (includeStatuses) for (const checkbox of root.querySelectorAll<HTMLInputElement>("[data-graph-status]")) checkbox.addEventListener("change", () => { if (checkbox.checked) this.statuses.add(checkbox.value); else this.statuses.delete(checkbox.value); this.savePreferences(layout); this.host.navigate("graph"); });
+  }
+
+  private bindFilterTemplates(root: HTMLElement, layout: GraphLayout): void {
+    root.querySelector<HTMLSelectElement>("[data-graph-filter-template]")?.addEventListener("change", (event) => {
+      const id = (event.target as HTMLSelectElement).value;
+      const template = this.filterTemplates(layout).find((item) => item.id === id && item.mode === layout.mode);
+      if (!template) return;
+      this.applyFilterSettings(template.filters);
+      this.filterTemplateEditor = null;
+      this.savePreferences(layout, template.id);
+      this.host.navigate("graph");
+    });
+    root.querySelector<HTMLInputElement>("[data-filter-template-name]")?.addEventListener("input", (event) => {
+      if (this.filterTemplateEditor) this.filterTemplateEditor.name = (event.target as HTMLInputElement).value;
+    });
   }
 
   private showContextMenu(root: HTMLElement, key: string, clientX: number, clientY: number): void {
@@ -552,11 +671,160 @@ export class GraphController {
     this.contextMenu = null;
   }
 
-  private savePreferences(layout: GraphLayout): void {
-    const filters = { focusKey: this.focusKey, depth: this.depth, statuses: [...this.statuses], entityTypes: [...this.entityTypes], importance: [...this.importance], contentTypes: [...this.contentTypes], collapseSecondaryFactions: this.collapseSecondaryFactions };
+  private savePreferences(layout: GraphLayout, activeTemplateId?: string): void {
+    const filters = this.currentFilterSettings();
+    const resolvedTemplateId = activeTemplateId ?? (
+      this.filterTemplateEditor?.mode === layout.mode ? this.filterTemplateEditor.templateId : ""
+    );
     const modeFilters = { ...((layout.filters.modeFilters as Record<string, unknown> | undefined) ?? {}), [layout.mode]: filters };
-    layout.filters = { ...layout.filters, modeFilters, spaceVersion: 3 };
+    const activeFilterTemplates = { ...((layout.filters.activeFilterTemplates as Record<string, unknown> | undefined) ?? {}), [layout.mode]: resolvedTemplateId };
+    layout.filters = { ...layout.filters, modeFilters, activeFilterTemplates, spaceVersion: 3 };
     this.scheduleSave(layout);
+  }
+
+  private currentFilterSettings(): GraphFilterSettings {
+    return {
+      focusKey: this.focusKey,
+      depth: this.depth,
+      statuses: [...this.statuses],
+      entityTypes: [...this.entityTypes],
+      importance: [...this.importance],
+      contentTypes: [...this.contentTypes],
+      collapseSecondaryFactions: this.collapseSecondaryFactions,
+    };
+  }
+
+  private applyFilterSettings(filters: GraphFilterSettings): void {
+    this.focusKey = filters.focusKey;
+    this.depth = filters.depth;
+    this.statuses = new Set(filters.statuses);
+    this.entityTypes = new Set(filters.entityTypes);
+    this.importance = new Set(filters.importance);
+    this.contentTypes = new Set(filters.contentTypes);
+    this.collapseSecondaryFactions = filters.collapseSecondaryFactions;
+  }
+
+  private defaultFilterSettings(): GraphFilterSettings {
+    return {
+      focusKey: "",
+      depth: 2,
+      statuses: [...OPTIONS.characterStatus],
+      entityTypes: this.registry.graphable().map((definition) => definition.type),
+      importance: [...GRAPH_IMPORTANCE],
+      contentTypes: [...GRAPH_CONTENT_TYPES, GRAPH_UNCLASSIFIED],
+      collapseSecondaryFactions: false,
+    };
+  }
+
+  private normalizeFilterSettings(value: unknown): GraphFilterSettings {
+    const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    const defaults = this.defaultFilterSettings();
+    const strings = (candidate: unknown, fallback: string[]): string[] => Array.isArray(candidate)
+      ? candidate.filter((item): item is string => typeof item === "string")
+      : fallback;
+    return {
+      focusKey: typeof raw.focusKey === "string" ? raw.focusKey : defaults.focusKey,
+      depth: typeof raw.depth === "number" ? raw.depth : defaults.depth,
+      statuses: strings(raw.statuses, defaults.statuses),
+      entityTypes: strings(raw.entityTypes, defaults.entityTypes)
+        .filter((item): item is EntityType => this.registry.graphable().some((definition) => definition.type === item)),
+      importance: strings(raw.importance, defaults.importance),
+      contentTypes: strings(raw.contentTypes, defaults.contentTypes),
+      collapseSecondaryFactions: raw.collapseSecondaryFactions === true,
+    };
+  }
+
+  private filterTemplates(layout: GraphLayout): GraphFilterTemplate[] {
+    const raw = layout.filters.filterTemplates;
+    if (!Array.isArray(raw)) return [];
+    const templates: GraphFilterTemplate[] = [];
+    for (const candidate of raw) {
+      if (!candidate || typeof candidate !== "object") continue;
+      const item = candidate as Record<string, unknown>;
+      if (typeof item.id !== "string" || typeof item.name !== "string" || (item.mode !== "custom" && item.mode !== "obsidian")) continue;
+      templates.push({
+        id: item.id,
+        name: item.name,
+        mode: item.mode,
+        filters: this.normalizeFilterSettings(item.filters),
+        layout: this.filterTemplateLayout(item.layout),
+      });
+    }
+    return templates;
+  }
+
+  private filterTemplateLayout(value: unknown): GraphModeLayout | undefined {
+    if (!value || typeof value !== "object") return undefined;
+    const layout = value as Partial<GraphModeLayout>;
+    if (!Array.isArray(layout.nodes) || !layout.viewport || typeof layout.viewport !== "object") return undefined;
+    if (![layout.viewport.x, layout.viewport.y, layout.viewport.zoom].every((item) => typeof item === "number")) return undefined;
+    return layout as GraphModeLayout;
+  }
+
+  private activeGraphSpace(layout: GraphLayout, mode: GraphMode = layout.mode): GraphModeLayout {
+    const activeId = this.activeFilterTemplateId(layout, mode);
+    const template = this.filterTemplates(layout).find((item) => item.id === activeId && item.mode === mode);
+    return template?.layout ?? activeGraphModeLayout(layout, mode);
+  }
+
+  private cloneGraphPlacement(space: GraphModeLayout): GraphModeLayout {
+    return {
+      nodes: space.nodes.map((node) => ({
+        entity: node.entity,
+        id: node.id,
+        x: node.x,
+        y: node.y,
+        scale: 1,
+        pinned: node.pinned,
+      })),
+      viewport: { ...space.viewport },
+    };
+  }
+
+  private activeFilterTemplateId(layout: GraphLayout, mode: GraphMode): string {
+    const active = layout.filters.activeFilterTemplates;
+    if (!active || typeof active !== "object") return "";
+    const id = (active as Record<string, unknown>)[mode];
+    return typeof id === "string" ? id : "";
+  }
+
+  private async saveFilterTemplate(): Promise<void> {
+    const layout = this.layout();
+    const editor = this.filterTemplateEditor;
+    if (!layout || !editor || editor.mode !== layout.mode) return;
+    const name = editor.name.trim();
+    if (!name) {
+      this.toast.show("Введите название шаблона", "error");
+      return;
+    }
+    const templates = this.filterTemplates(layout);
+    const id = editor.templateId || `filter_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const template: GraphFilterTemplate = {
+      id,
+      name,
+      mode: layout.mode,
+      filters: this.currentFilterSettings(),
+      ...(editor.savePlacement ? { layout: this.cloneGraphPlacement(this.activeGraphSpace(layout)) } : {}),
+    };
+    const index = templates.findIndex((item) => item.id === id);
+    if (index >= 0) templates[index] = template; else templates.push(template);
+    layout.filters = { ...layout.filters, filterTemplates: templates };
+    this.filterTemplateEditor = null;
+    this.savePreferences(layout, id);
+    window.clearTimeout(this.saveTimer);
+    await this.saveLayout(layout);
+    this.host.navigate("graph");
+  }
+
+  private async clearGraphFilters(): Promise<void> {
+    const layout = this.layout();
+    if (!layout) return;
+    this.applyFilterSettings(this.defaultFilterSettings());
+    this.filterTemplateEditor = null;
+    this.savePreferences(layout);
+    window.clearTimeout(this.saveTimer);
+    await this.saveLayout(layout);
+    this.host.navigate("graph");
   }
 
   private modeFilters(layout: GraphLayout, mode: GraphMode): Record<string, unknown> {
@@ -778,7 +1046,8 @@ export class GraphController {
       else if (key === "textColor") placement.textColor = input.value;
       else if (key === "borderColor") placement.borderColor = input.value;
     }
-    placement.pinned = shouldPinMovedGraphNode(layout.mode);
+    const activePlacement = this.activeGraphSpace(layout).nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey);
+    if (activePlacement) activePlacement.pinned = shouldPinMovedGraphNode(layout.mode);
     this.scheduleSave(layout);
     this.host.navigate("graph");
   }
@@ -792,7 +1061,7 @@ export class GraphController {
   private async resetLayout(): Promise<void> {
     const layout = this.layout();
     if (!layout || layout.mode !== "custom") return;
-    const space = activeGraphModeLayout(layout, "custom");
+    const space = this.activeGraphSpace(layout, "custom");
     for (let index = 0; index < space.nodes.length; index += 1) {
       const node = space.nodes[index]!;
       if (node.entity === "coteries") { node.x = GRAPH_WIDTH / 2; node.y = GRAPH_HEIGHT / 2; node.pinned = true; continue; }

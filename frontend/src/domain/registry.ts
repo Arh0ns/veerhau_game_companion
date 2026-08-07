@@ -163,8 +163,9 @@ const definitions: EntityDefinition[] = [
       { key: "importance", label: "Важность", kind: "select", options: OPTIONS.graphImportance },
       { key: "contentType", label: "Тип материала", kind: "select", options: OPTIONS.contentType },
       { key: "eventId", label: "Связанное событие", kind: "ref", entity: "events" },
+      { key: "description", label: "Описание", kind: "textarea", wide: true },
       { key: "notes", label: "Заметки", kind: "textarea", wide: true },
-    ], title: fallbackTitle, summary: (r) => value(r, "source") || value(r, "notes"),
+    ], title: fallbackTitle, summary: (r) => value(r, "description") || value(r, "source") || value(r, "notes"),
   },
   {
     type: "clues", label: "Улики", singular: "Улика", description: "Материальные и косвенные улики.", navigation: true, boardable: true, graphable: true,
@@ -210,8 +211,9 @@ const definitions: EntityDefinition[] = [
       { key: "title", label: "Название", kind: "text", required: true },
       { key: "authorId", label: "От лица члена котерии", kind: "ref", entity: "characters", required: true, filter: (r) => value(r, "characterType") === "Игровой персонаж" },
       { key: "text", label: "Текст", kind: "textarea", wide: true },
+      { key: "description", label: "Описание", kind: "textarea", wide: true },
       { key: "notes", label: "Примечания", kind: "textarea", wide: true },
-    ], title: fallbackTitle, summary: (r) => value(r, "text") || value(r, "notes"),
+    ], title: fallbackTitle, summary: (r) => value(r, "description") || value(r, "text") || value(r, "notes"),
   },
   {
     type: "memoirs", label: "Мемуары", singular: "Запись мемуаров", description: "Личные записи игровых персонажей.", navigation: false, boardable: false, graphable: false,
