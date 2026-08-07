@@ -162,6 +162,7 @@ export class EntityController {
     preset: Record<string, unknown> = {},
     afterSave?: (record: ChronicleRecord) => Promise<void> | void,
     afterCancel?: () => void,
+    relationshipPreset: ReadonlyMap<string, readonly string[]> = new Map(),
   ): void {
     const record = id ? this.store.record(entity, id) : undefined;
     const effectivePreset = record ? preset : {
@@ -172,7 +173,7 @@ export class EntityController {
     const returnRoute = this.host.returnRoute(`entity:${entity}`);
     const root = this.modal.open(
       record ? `Редактировать: ${this.registry.get(entity).title(record)}` : `Новый объект: ${this.registry.get(entity).singular}`,
-      this.forms.render(entity, record, effectivePreset),
+      this.forms.render(entity, record, effectivePreset, relationshipPreset),
       "modal-wide",
     );
     if (!record) this.bindTemplatePicker(root, entity, effectivePreset);
@@ -182,6 +183,19 @@ export class EntityController {
     });
     this.forms.bindConditionalFields(root);
     const form = root.querySelector<HTMLFormElement>("[data-entity-form]");
+    for (const button of root.querySelectorAll<HTMLButtonElement>("[data-create-related]")) button.addEventListener("click", () => {
+      if (!form) return;
+      const targetEntity = button.dataset.targetEntity as EntityType | undefined;
+      const fieldKey = button.dataset.fieldKey ?? "";
+      if (!targetEntity || !fieldKey) return;
+      const draft = this.forms.collect(form);
+      const selections = new Map([...draft.relationships].map(([key, ids]) => [key, [...ids]]));
+      const reopen = (created?: ChronicleRecord) => {
+        if (created) selections.set(fieldKey, [...new Set([...(selections.get(fieldKey) ?? []), created.id])]);
+        this.openEntityForm(entity, id, draft.payload, afterSave, afterCancel, selections);
+      };
+      this.openEntityForm(targetEntity, undefined, {}, (created) => reopen(created), () => reopen());
+    });
     form?.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.run(async () => {

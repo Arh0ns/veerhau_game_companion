@@ -1,7 +1,7 @@
 import type { AppStore } from "../application/store";
 import { OPTIONS, type EntityRegistry } from "../domain/registry";
 import { graphNodeVisual, regularPolygonPoints, starPoints, type GraphShape } from "../domain/graph-visuals";
-import { activeGraphModeLayout } from "../domain/graph-layout-state";
+import { activeGraphModeLayout, shouldPinMovedGraphNode } from "../domain/graph-layout-state";
 import { matchesGraphRecordFilters } from "../domain/graph-filter";
 import { GRAPH_CONTENT_TYPES, GRAPH_IMPORTANCE, GRAPH_UNCLASSIFIED, GraphStyleResolver, defaultGraphModeStyle, globalGraphStyleTargets, knownGraphSubtypes, type GraphStyleTarget } from "../domain/graph-style";
 import { collapseSecondaryFactionRelationships, reachableNodeKeys } from "../domain/graph-projection";
@@ -89,7 +89,7 @@ export class GraphController {
     const customActions = `<button class="btn" data-action="open-graph-style">Дефолтные стили</button>${layout.mode === "custom" ? `<button class="btn" data-action="reset-graph-layout">Пересобрать</button>` : ""}`;
     const space = activeGraphModeLayout(layout, layout.mode);
     return `<header class="view-head graph-view-head"><div><h1>Граф связей</h1><p>${layout.mode === "obsidian" ? "Свободный граф: связанные узлы притягиваются, подписи автоматически освобождают место." : "Крупные узлы, фильтры, индивидуальные стили и закреплённые позиции."}</p></div><div class="toolbar"><div class="segmented-control" aria-label="Режим графа"><button class="${layout.mode === "custom" ? "active" : ""}" data-action="set-graph-mode" data-mode="custom">Настраиваемый</button><button class="${layout.mode === "obsidian" ? "active" : ""}" data-action="set-graph-mode" data-mode="obsidian">Obsidian</button></div><button class="btn" data-action="bookmark-graph">В закладки</button>${customActions}</div></header>
-      <div class="graph-layout graph-2d-layout"><div class="graph-wrap graph-2d-wrap" data-graph-wrap style="--graph-bg:${escapeAttr(modeStyle.backgroundColor)};--graph-grid:${escapeAttr(modeStyle.gridColor)};--graph-grid-opacity:${modeStyle.gridOpacity};--graph-edge-width:${modeStyle.edgeWidth};--graph-edge-opacity:${modeStyle.edgeOpacity};--graph-edge-label-size:${modeStyle.edgeLabelSize}px"><svg class="graph-svg" data-graph-svg viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" aria-label="Граф связей"><defs>${this.renderMarkers(relationships, modeStyle)}</defs><g data-graph-world transform="${this.worldTransform(space)}">${this.renderEdges(relationships, nodes, modeStyle, layout.mode)}${nodes.map((node) => this.renderNode(node, layout.mode, modeStyle)).join("")}</g></svg><div class="graph-hint">Перетащите фон для перемещения, колесо для масштаба, узел — для фиксации позиции.${layout.mode === "obsidian" ? " Нажмите узел, чтобы выделить его окружение; ПКМ открывает действия." : ""}</div></div>${this.renderPanel(layout.mode, allNodes, relationships)}</div>`;
+      <div class="graph-layout graph-2d-layout"><div class="graph-wrap graph-2d-wrap" data-graph-wrap style="--graph-bg:${escapeAttr(modeStyle.backgroundColor)};--graph-grid:${escapeAttr(modeStyle.gridColor)};--graph-grid-opacity:${modeStyle.gridOpacity};--graph-edge-width:${modeStyle.edgeWidth};--graph-edge-opacity:${modeStyle.edgeOpacity};--graph-edge-label-size:${modeStyle.edgeLabelSize}px"><svg class="graph-svg" data-graph-svg viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" aria-label="Граф связей"><defs>${this.renderMarkers(relationships, modeStyle)}</defs><g data-graph-world transform="${this.worldTransform(space)}">${this.renderEdges(relationships, nodes, modeStyle, layout.mode)}${nodes.map((node) => this.renderNode(node, layout.mode, modeStyle)).join("")}</g></svg><div class="graph-hint">Перетащите фон для перемещения, колесо для масштаба.${layout.mode === "obsidian" ? " Перетащите узел, чтобы перестроить связанное окружение; после отпускания он остаётся свободным. Нажмите узел, чтобы выделить его окружение; ПКМ открывает действия." : " Перетащите узел, чтобы закрепить его позицию."}</div></div>${this.renderPanel(layout.mode, allNodes, relationships)}</div>`;
   }
 
   bind(root: HTMLElement): void {
@@ -253,12 +253,15 @@ export class GraphController {
       if (relationship.targetType === "coteries" && relationship.targetId === coterie.record.id && relationship.sourceType === "characters") memberIds.add(relationship.sourceId);
     }
     let added = false;
+    let pinStateChanged = false;
     const result: RuntimeNode[] = [];
     for (let index = 0; index < graphRecords.length; index += 1) {
       const { entity, record } = graphRecords[index]!;
       const key = entityKey(entity, record.id);
       let placement = placements.get(key);
       if (!placement) { placement = this.initialPlacement(entity, record.id, index, graphRecords.length, memberIds); space.nodes.push(placement); added = true; }
+      const shouldBePinned = layout.mode === "obsidian" ? false : placement.pinned;
+      if (placement.pinned !== shouldBePinned) { placement.pinned = shouldBePinned; pinStateChanged = true; }
       const runtimePlacement: GraphNodePlacement = placement;
       const definition = this.registry.get(entity);
       const title = definition.title(record);
@@ -291,7 +294,7 @@ export class GraphController {
         mass: resolved.mass,
       });
     }
-    if (added) this.scheduleSave(layout);
+    if (added || pinStateChanged) this.scheduleSave(layout);
     return result;
   }
 
@@ -750,7 +753,7 @@ export class GraphController {
   private moveNode(space: GraphModeLayout, layout: GraphLayout, key: string, x: number, y: number): void {
     const placement = space.nodes.find((node) => entityKey(node.entity, node.id) === key);
     if (!placement) return;
-    placement.x = x; placement.y = y; placement.pinned = true;
+    placement.x = x; placement.y = y; placement.pinned = shouldPinMovedGraphNode(layout.mode);
     this.scheduleSave(layout);
   }
 
@@ -775,7 +778,7 @@ export class GraphController {
       else if (key === "textColor") placement.textColor = input.value;
       else if (key === "borderColor") placement.borderColor = input.value;
     }
-    placement.pinned = true;
+    placement.pinned = shouldPinMovedGraphNode(layout.mode);
     this.scheduleSave(layout);
     this.host.navigate("graph");
   }

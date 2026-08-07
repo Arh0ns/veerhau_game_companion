@@ -47,6 +47,7 @@ describe("entity registry policies", () => {
       entity: "events",
       relationLabel: "связано",
       currentRole: "source",
+      allowCreate: true,
     });
     expect(eventCharacters).toMatchObject({
       kind: "relationshipSet",

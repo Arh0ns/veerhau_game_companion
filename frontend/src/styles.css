@@ -2329,6 +2329,8 @@ textarea:focus {
 .multi-select-list label { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 5px; }
 .multi-select-list label:hover { background: rgba(255,255,255,.04); }
 .multi-select-list input { width: auto; }
+.relationship-set-control { display: grid; gap: 8px; }
+.relationship-set-actions { display: flex; justify-content: flex-start; }
 
 .modal { max-height: min(90vh, 900px); overflow: auto; }
 .modal-wide { width: min(900px, calc(100vw - 28px)); }

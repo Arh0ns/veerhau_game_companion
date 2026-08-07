@@ -26,6 +26,7 @@ export interface FieldDefinition {
   filter?: (record: ChronicleRecord) => boolean;
   relationLabel?: string;
   currentRole?: "source" | "target";
+  allowCreate?: boolean;
   visibleWhen?: { field: string; values: readonly string[] };
   placeholder?: string;
 }
@@ -104,7 +105,7 @@ const definitions: EntityDefinition[] = [
       { key: "faction", label: "Фракция", kind: "relationshipSet", entity: "factions", relationLabel: "член", currentRole: "target" },
       { key: "description", label: "Описание", kind: "textarea", wide: true },
       { key: "notes", label: "Заметки", kind: "textarea", wide: true },
-      { key: "relatedEvents", label: "Связанные события", kind: "relationshipSet", entity: "events", relationLabel: "связано", currentRole: "source", wide: true },
+      { key: "relatedEvents", label: "Связанные события", kind: "relationshipSet", entity: "events", relationLabel: "связано", currentRole: "source", allowCreate: true, wide: true },
     ], title: fallbackTitle, summary: (r) => value(r, "description") || value(r, "notes"),
   },
   {

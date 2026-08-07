@@ -1,5 +1,9 @@
 import type { GraphLayout, GraphMode, GraphModeLayout, GraphNodePlacement, Viewport } from "./types";
 
+export function shouldPinMovedGraphNode(mode: GraphMode): boolean {
+  return mode === "custom";
+}
+
 function cloneViewport(viewport: Viewport): Viewport {
   return { x: viewport.x, y: viewport.y, zoom: viewport.zoom };
 }

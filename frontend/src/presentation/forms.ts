@@ -19,13 +19,18 @@ export class EntityFormRenderer {
     private readonly gateway: HttpChronicleGateway,
   ) {}
 
-  render(entity: EntityType, record?: ChronicleRecord, preset: Record<string, unknown> = {}): string {
+  render(
+    entity: EntityType,
+    record?: ChronicleRecord,
+    preset: Record<string, unknown> = {},
+    relationshipPreset: ReadonlyMap<string, readonly string[]> = new Map(),
+  ): string {
     const definition = this.registry.get(entity);
     const values = { ...(record ?? {}), ...preset } as ChronicleRecord;
     return `
       <form class="entity-form" data-entity-form data-entity="${entity}" data-id="${escapeAttr(record?.id ?? "")}">
         <div class="form-grid">
-          ${definition.fields.map((field) => this.renderField(entity, field, values)).join("")}
+          ${definition.fields.map((field) => this.renderField(entity, field, values, relationshipPreset)).join("")}
         </div>
         <p class="form-error" data-form-error hidden></p>
         <div class="modal-actions">
@@ -140,7 +145,12 @@ export class EntityFormRenderer {
     refresh();
   }
 
-  private renderField(entity: EntityType, field: FieldDefinition, record: ChronicleRecord): string {
+  private renderField(
+    entity: EntityType,
+    field: FieldDefinition,
+    record: ChronicleRecord,
+    relationshipPreset: ReadonlyMap<string, readonly string[]>,
+  ): string {
     const visibleAttrs = field.visibleWhen
       ? `data-visible-field="${escapeAttr(field.visibleWhen.field)}" data-visible-values="${escapeAttr(field.visibleWhen.values.join("|"))}"`
       : "";
@@ -166,10 +176,11 @@ export class EntityFormRenderer {
     } else if (field.kind === "multiRef") {
       control = this.renderMultiRef(field, asStringArray(record[field.key]));
     } else if (field.kind === "relationshipSet") {
-      control = this.renderRelationshipSet(entity, record.id, field);
+      control = this.renderRelationshipSet(entity, record.id, field, relationshipPreset);
     } else {
       control = `<input type="${field.kind}" name="${field.key}" value="${escapeAttr(value)}" placeholder="${escapeAttr(field.placeholder ?? "")}" ${required}>`;
     }
+    if (field.kind === "relationshipSet") return `<div class="${classes}" ${visibleAttrs}><span>${escapeHtml(field.label)}</span>${control}</div>`;
     return `<label class="${classes}" ${visibleAttrs}><span>${escapeHtml(field.label)}</span>${control}</label>`;
   }
 
@@ -220,12 +231,21 @@ export class EntityFormRenderer {
     return `<div class="multi-select-list">${this.store.records(field.entity).filter((record) => !field.filter || field.filter(record)).map((record) => `<label><input type="checkbox" name="${field.key}" value="${escapeAttr(record.id)}" ${selected.includes(record.id) ? "checked" : ""}><span>${escapeHtml(definition.title(record))}</span></label>`).join("") || "<span class='muted'>Нет доступных объектов</span>"}</div>`;
   }
 
-  private renderRelationshipSet(entity: EntityType, recordId: string, field: FieldDefinition): string {
+  private renderRelationshipSet(
+    entity: EntityType,
+    recordId: string,
+    field: FieldDefinition,
+    relationshipPreset: ReadonlyMap<string, readonly string[]>,
+  ): string {
     if (!field.entity) return "";
-    const selected = new Set(this.matchingRelationships(entity, recordId, field).map((relationship) => field.currentRole === "source" ? relationship.targetId : relationship.sourceId));
+    const preset = relationshipPreset.get(field.key);
+    const selected = new Set(preset ?? this.matchingRelationships(entity, recordId, field).map((relationship) => field.currentRole === "source" ? relationship.targetId : relationship.sourceId));
     const definition = this.registry.get(field.entity);
     const records = this.store.records(field.entity).filter((record) => record.id !== recordId && (!field.filter || field.filter(record)));
-    return `<div class="multi-select-list relation-select">${records.map((record) => `<label><input type="checkbox" name="${field.key}" value="${escapeAttr(record.id)}" ${selected.has(record.id) ? "checked" : ""}><span>${escapeHtml(definition.title(record))}</span></label>`).join("") || "<span class='muted'>Нет доступных объектов</span>"}</div>`;
+    const create = field.allowCreate
+      ? `<div class="relationship-set-actions"><button class="btn small ghost" type="button" data-create-related data-field-key="${escapeAttr(field.key)}" data-target-entity="${field.entity}">+ Создать ${escapeHtml(definition.singular.toLocaleLowerCase("ru"))}</button></div>`
+      : "";
+    return `<div class="relationship-set-control"><div class="multi-select-list relation-select">${records.map((record) => `<label><input type="checkbox" name="${field.key}" value="${escapeAttr(record.id)}" ${selected.has(record.id) ? "checked" : ""}><span>${escapeHtml(definition.title(record))}</span></label>`).join("") || "<span class='muted'>Нет доступных объектов</span>"}</div>${create}</div>`;
   }
 
   private matchingRelationships(entity: EntityType, recordId: string, field: FieldDefinition): Relationship[] {

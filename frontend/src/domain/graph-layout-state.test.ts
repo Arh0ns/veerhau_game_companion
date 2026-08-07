@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeGraphModeLayout, normalizeGraphModeLayouts } from "./graph-layout-state";
+import { activeGraphModeLayout, normalizeGraphModeLayouts, shouldPinMovedGraphNode } from "./graph-layout-state";
 import type { GraphLayout } from "./types";
 
 const legacyLayout = {
@@ -26,5 +26,10 @@ describe("graph mode layouts", () => {
   it("returns only the requested mode space", () => {
     const layout = { ...legacyLayout, modeLayouts: normalizeGraphModeLayouts(legacyLayout) };
     expect(activeGraphModeLayout(layout, "custom")).not.toBe(activeGraphModeLayout(layout, "obsidian"));
+  });
+
+  it("pins manual placements but releases Obsidian nodes back into physics", () => {
+    expect(shouldPinMovedGraphNode("custom")).toBe(true);
+    expect(shouldPinMovedGraphNode("obsidian")).toBe(false);
   });
 });

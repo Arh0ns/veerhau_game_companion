@@ -1,4 +1,5 @@
 import { entityKey, type GraphMode, type GraphPhysicsStyle, type Relationship, type Viewport } from "../domain/types";
+import { shouldPinMovedGraphNode } from "../domain/graph-layout-state";
 
 export interface SvgGraphNode {
   key: string;
@@ -132,10 +133,11 @@ export class SvgGraphScene {
         moved ||= Math.hypot(dx, dy) > 3;
         node.x = original.x + dx / this.viewport.zoom;
         node.y = original.y + dy / this.viewport.zoom;
-        node.pinned = true;
+        node.pinned = shouldPinMovedGraphNode(this.mode);
         this.updateDom();
       }, () => {
         nodeElement.classList.remove("dragging");
+        node.pinned = shouldPinMovedGraphNode(this.mode);
         this.callbacks.onMoveNode(node.key, node.x, node.y);
         if (!moved) {
           if (this.mode === "obsidian") this.callbacks.onPositionsChanged(this.nodes);
