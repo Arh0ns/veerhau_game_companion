@@ -4,6 +4,7 @@ from dataclasses import fields
 from typing import Any, Callable, Generic, TypeVar
 
 from chronicle.domain.models import (
+    Artifact,
     BoardGroup,
     BoardNode,
     BoardNote,
@@ -113,6 +114,8 @@ def _node_style_from_json(value: dict[str, Any]) -> NodeStyle:
         color=str(value.get("color", "") or ""),
         text_color=str(value.get("textColor", "") or ""),
         border_color=str(value.get("borderColor", "") or ""),
+        border_style=str(value.get("borderStyle", "") or ""),
+        border_width=float(value.get("borderWidth", 0) or 0),
     )
 
 
@@ -265,6 +268,8 @@ def _graph_nodes_to_json(value: list[GraphNodePlacement]) -> list[dict[str, Any]
             "color": item.style.color,
             "textColor": item.style.text_color,
             "borderColor": item.style.border_color,
+            "borderStyle": item.style.border_style,
+            "borderWidth": item.style.border_width,
         }
         for item in value
     ]
@@ -307,6 +312,7 @@ def create_default_mapper_registry() -> RecordMapperRegistry:
         (EntityType.EVENTS, ChronicleEvent, {"title": "title", "description": "description", "game_date": "gameDate", "game_time": "gameTime", "importance": "importance", "content_type": "contentType", "city_id": "cityId", "place_id": "placeId", "consequence": "consequence", "notes": "notes", **metadata}),
         (EntityType.FACTS, Fact, {"statement": "statement", "source": "source", "reliability": "reliability", "importance": "importance", "content_type": "contentType", "event_id": "eventId", "attached_relationship_ids": "attachedRelationshipIds", "notes": "notes", **metadata}),
         (EntityType.CLUES, Clue, {"title": "title", "description": "description", "clue_type": "clueType", "source": "source", "reliability": "reliability", "importance": "importance", "event_id": "eventId", "discovered_by_ids": "discoveredByIds", "attached_relationship_ids": "attachedRelationshipIds", "notes": "notes", **metadata}),
+        (EntityType.ARTIFACTS, Artifact, {"title": "title", "owner_id": "ownerId", "importance": "importance", "description": "description", "notes": "notes", **metadata}),
         (EntityType.STORYLINES, Storyline, {"title": "title", "description": "description", "status": "status", "importance": "importance", "open_questions": "openQuestions", "notes": "notes", **metadata}),
         (EntityType.THEORIES, Theory, {"title": "title", "author_id": "authorId", "status": "status", "importance": "importance", "description": "description", "attached_relationship_ids": "attachedRelationshipIds", "notes": "notes", **metadata}),
         (EntityType.NOTES, BoardNote, {"title": "title", "author_id": "authorId", "importance": "importance", "text": "text", "attached_relationship_ids": "attachedRelationshipIds", "notes": "notes", **metadata}),

@@ -23,6 +23,7 @@ const NAMESPACE_LABELS: Record<string, string> = {
   reliability: "достоверность",
   eventId: "событие",
   discoveredByIds: "обнаружил",
+  ownerId: "владелец",
   authorId: "автор",
   eventIds: "событие",
   characterIds: "персонаж",

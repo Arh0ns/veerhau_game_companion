@@ -7,6 +7,7 @@ export const ENTITY_TYPES = [
   "events",
   "facts",
   "clues",
+  "artifacts",
   "storylines",
   "theories",
   "notes",
@@ -117,6 +118,8 @@ export interface GraphNodePlacement {
   color?: string;
   textColor?: string;
   borderColor?: string;
+  borderStyle?: "solid" | "dashed" | "dotted";
+  borderWidth?: number;
 }
 
 export type GraphMode = "custom" | "obsidian";
@@ -131,6 +134,8 @@ export interface GraphPhysicsStyle {
 export interface GraphEntityTypeStyle {
   color?: string;
   borderColor?: string;
+  borderStyle?: "solid" | "dashed" | "dotted";
+  borderWidth?: number;
   textColor?: string;
   fontFamily?: string;
   labelSize?: number;

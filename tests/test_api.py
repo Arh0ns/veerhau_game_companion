@@ -190,6 +190,36 @@ def test_importance_is_available_on_every_graph_entity(client: TestClient) -> No
     assert defaulted.json()["importance"] == "Обычная"
 
 
+def test_artifact_requires_character_owner_and_allows_empty_description(client: TestClient) -> None:
+    login(client)
+    owner = client.post("/api/v1/records/characters", json={"name": "Хранитель"}).json()
+    created = client.post(
+        "/api/v1/records/artifacts",
+        json={
+            "title": "Серебряный ключ",
+            "ownerId": owner["id"],
+            "description": "Открывает запечатанную дверь.",
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["ownerId"] == owner["id"]
+    assert created.json()["description"] == "Открывает запечатанную дверь."
+    assert created.json()["importance"] == "Обычная"
+
+    missing_description = client.post(
+        "/api/v1/records/artifacts",
+        json={"title": "Пустой футляр", "ownerId": owner["id"]},
+    )
+    assert missing_description.status_code == 201
+    assert missing_description.json()["description"] == ""
+
+    unknown_owner = client.post(
+        "/api/v1/records/artifacts",
+        json={"title": "Чужая реликвия", "ownerId": "chr_missing", "description": "Без хозяина."},
+    )
+    assert unknown_owner.status_code == 400
+
+
 def test_character_importance_and_abilities_become_structured_tags(client: TestClient) -> None:
     login(client)
     created = client.post(

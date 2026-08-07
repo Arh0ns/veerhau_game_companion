@@ -42,6 +42,7 @@ class EntityChoicePolicy:
         EntityType.EVENTS,
         EntityType.FACTS,
         EntityType.CLUES,
+        EntityType.ARTIFACTS,
         EntityType.THEORIES,
         EntityType.NOTES,
     )
@@ -73,6 +74,7 @@ class EntityChoicePolicy:
             EntityType.COTERIES,
             EntityType.EVENTS,
             EntityType.CLUES,
+            EntityType.ARTIFACTS,
         ),
         EntityType.FACTIONS: (
             EntityType.CHARACTERS,
@@ -86,11 +88,13 @@ class EntityChoicePolicy:
             EntityType.LOCATIONS,
             EntityType.FACTS,
             EntityType.CLUES,
+            EntityType.ARTIFACTS,
             EntityType.STORYLINES,
         ),
         EntityType.FACTS: (
             EntityType.EVENTS,
             EntityType.CLUES,
+            EntityType.ARTIFACTS,
             EntityType.THEORIES,
             EntityType.CHARACTERS,
             EntityType.STORYLINES,
@@ -98,13 +102,22 @@ class EntityChoicePolicy:
         EntityType.CLUES: (
             EntityType.EVENTS,
             EntityType.FACTS,
+            EntityType.ARTIFACTS,
             EntityType.THEORIES,
             EntityType.CHARACTERS,
             EntityType.STORYLINES,
         ),
+        EntityType.ARTIFACTS: (
+            EntityType.CHARACTERS,
+            EntityType.EVENTS,
+            EntityType.FACTS,
+            EntityType.CLUES,
+            EntityType.THEORIES,
+        ),
         EntityType.THEORIES: (
             EntityType.FACTS,
             EntityType.CLUES,
+            EntityType.ARTIFACTS,
             EntityType.EVENTS,
             EntityType.CHARACTERS,
             EntityType.STORYLINES,
@@ -113,6 +126,7 @@ class EntityChoicePolicy:
             EntityType.EVENTS,
             EntityType.FACTS,
             EntityType.CLUES,
+            EntityType.ARTIFACTS,
             EntityType.THEORIES,
             EntityType.FACTIONS,
         ),
@@ -150,7 +164,11 @@ class RelationshipLabelPolicy:
             return ("связано", "член", "союзник", "враг")
         if pair == {EntityType.EVENTS, EntityType.LOCATIONS}:
             return ("связано", "произошло в")
-        if pair & {EntityType.FACTS, EntityType.CLUES, EntityType.THEORIES}:
+        if source is EntityType.CHARACTERS and target is EntityType.ARTIFACTS:
+            return ("владеет", "связано")
+        if source is EntityType.ARTIFACTS and target is EntityType.CHARACTERS:
+            return ("принадлежит", "связано")
+        if pair & {EntityType.FACTS, EntityType.CLUES, EntityType.ARTIFACTS, EntityType.THEORIES}:
             return ("связано", "источник", "подтверждает", "опровергает")
         return ("связано",)
 

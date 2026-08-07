@@ -15,8 +15,15 @@ export class ModalService {
         </header>
         <div class="modal-body">${body}</div>
       </section>`;
+    let backdropPressed = false;
+    backdrop.addEventListener("pointerdown", (event) => { backdropPressed = event.target === backdrop; });
+    backdrop.addEventListener("pointerup", (event) => {
+      if (backdropPressed && event.target === backdrop) this.dismiss(backdrop);
+      backdropPressed = false;
+    });
+    backdrop.addEventListener("pointercancel", () => { backdropPressed = false; });
     backdrop.addEventListener("click", (event) => {
-      if (event.target === backdrop || (event.target instanceof Element && event.target.closest("[data-modal-close]"))) this.close();
+      if (event.target instanceof Element && event.target.closest("[data-modal-close]")) this.dismiss(backdrop);
     });
     document.body.append(backdrop);
     this.backdrop = backdrop;
@@ -44,6 +51,12 @@ export class ModalService {
   close(): void {
     this.backdrop?.remove();
     this.backdrop = null;
+  }
+
+  private dismiss(backdrop: HTMLElement): void {
+    if (this.backdrop !== backdrop) return;
+    backdrop.dispatchEvent(new CustomEvent("modalcancel"));
+    this.close();
   }
 }
 

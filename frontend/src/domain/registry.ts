@@ -181,6 +181,15 @@ const definitions: EntityDefinition[] = [
     ], title: fallbackTitle, summary: (r) => value(r, "description") || value(r, "source"),
   },
   {
+    type: "artifacts", label: "Артефакты", singular: "Артефакт", description: "Значимые предметы с известным владельцем.", navigation: true, boardable: true, graphable: true,
+    fields: [
+      { key: "title", label: "Название", kind: "text", required: true },
+      { key: "ownerId", label: "Персонаж-владелец", kind: "ref", entity: "characters", required: true, relationLabel: "владеет", currentRole: "target" },
+      { key: "description", label: "Описание", kind: "textarea", wide: true },
+      { key: "notes", label: "Заметки", kind: "textarea", wide: true },
+    ], title: fallbackTitle, summary: (r) => value(r, "description") || value(r, "notes"),
+  },
+  {
     type: "storylines", label: "Сюжетные линии", singular: "Сюжетная линия", description: "Активные дела и открытые вопросы.", navigation: true, boardable: true, graphable: true,
     fields: [
       { key: "title", label: "Название", kind: "text", required: true },
@@ -259,7 +268,7 @@ const definitions: EntityDefinition[] = [
   },
 ];
 
-const taggable = new Set<EntityType>(["coteries", "characters", "factions", "locations", "events", "facts", "clues", "storylines", "theories", "notes", "memoirs"]);
+const taggable = new Set<EntityType>(["coteries", "characters", "factions", "locations", "events", "facts", "clues", "artifacts", "storylines", "theories", "notes", "memoirs"]);
 for (const definition of definitions) {
   if (!taggable.has(definition.type)) continue;
   if (definition.graphable && !definition.fields.some((field) => field.key === "importance")) {
@@ -303,18 +312,19 @@ export class EntityRegistry {
 }
 
 export class EntityChoicePolicy {
-  readonly boardPrimary: EntityType[] = ["events", "facts", "clues", "theories", "notes"];
+  readonly boardPrimary: EntityType[] = ["events", "facts", "clues", "artifacts", "theories", "notes"];
   readonly boardMore: EntityType[] = ["characters", "factions", "locations", "storylines"];
-  readonly linkable: EntityType[] = ["campaigns", "coteries", "characters", "factions", "locations", "events", "facts", "clues", "storylines", "theories", "notes", "memoirs"];
+  readonly linkable: EntityType[] = ["campaigns", "coteries", "characters", "factions", "locations", "events", "facts", "clues", "artifacts", "storylines", "theories", "notes", "memoirs"];
 
   private readonly recommended: Partial<Record<EntityType, EntityType[]>> = {
-    characters: ["characters", "factions", "coteries", "events", "clues"],
+    characters: ["characters", "factions", "coteries", "events", "clues", "artifacts"],
     factions: ["characters", "factions", "coteries", "locations", "storylines"],
-    events: ["characters", "locations", "facts", "clues", "storylines"],
-    facts: ["events", "clues", "theories", "characters", "storylines"],
-    clues: ["events", "facts", "theories", "characters", "storylines"],
-    theories: ["facts", "clues", "events", "characters", "factions", "storylines"],
-    storylines: ["events", "facts", "clues", "theories", "factions"],
+    events: ["characters", "locations", "facts", "clues", "artifacts", "storylines"],
+    facts: ["events", "clues", "artifacts", "theories", "characters", "storylines"],
+    clues: ["events", "facts", "artifacts", "theories", "characters", "storylines"],
+    artifacts: ["characters", "events", "facts", "clues", "theories"],
+    theories: ["facts", "clues", "artifacts", "events", "characters", "factions", "storylines"],
+    storylines: ["events", "facts", "clues", "artifacts", "theories", "factions"],
     locations: ["events", "characters", "factions", "locations", "storylines"],
   };
 
@@ -330,7 +340,9 @@ export class RelationshipLabelPolicy {
     const pair = new Set([source, target]);
     if ([...pair].every((type) => ["characters", "factions", "coteries"].includes(type))) return ["связано", "член", "союзник", "враг"];
     if (pair.has("events") && pair.has("locations")) return ["связано", "произошло в"];
-    if ([...pair].some((type) => ["facts", "clues", "theories"].includes(type))) return ["связано", "источник", "подтверждает", "опровергает"];
+    if (source === "characters" && target === "artifacts") return ["владеет", "связано"];
+    if (source === "artifacts" && target === "characters") return ["принадлежит", "связано"];
+    if ([...pair].some((type) => ["facts", "clues", "artifacts", "theories"].includes(type))) return ["связано", "источник", "подтверждает", "опровергает"];
     return ["связано"];
   }
 

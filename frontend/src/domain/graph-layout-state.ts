@@ -38,3 +38,17 @@ export function activeGraphModeLayout(layout: GraphLayout, mode: GraphMode): Gra
   layout.modeLayouts ??= normalizeGraphModeLayouts(layout);
   return layout.modeLayouts[mode];
 }
+
+export function cloneGraphLayoutDraft(layout: GraphModeLayout): GraphModeLayout {
+  return {
+    nodes: layout.nodes.map((node) => ({
+      entity: node.entity,
+      id: node.id,
+      x: node.x,
+      y: node.y,
+      scale: 1,
+      pinned: node.pinned,
+    })),
+    viewport: cloneViewport(layout.viewport),
+  };
+}

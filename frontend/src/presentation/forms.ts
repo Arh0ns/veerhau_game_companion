@@ -202,7 +202,7 @@ export class EntityFormRenderer {
 
   private allTags(): string[] {
     const result = new Set<string>();
-    for (const entity of ["coteries", "characters", "factions", "locations", "events", "facts", "clues", "storylines", "theories", "notes", "memoirs"] as EntityType[]) {
+    for (const entity of ["coteries", "characters", "factions", "locations", "events", "facts", "clues", "artifacts", "storylines", "theories", "notes", "memoirs"] as EntityType[]) {
       for (const record of this.store.records(entity)) {
         for (const tag of asStringArray(record.tags)) result.add(tag);
         for (const tag of projectedSystemTagPaths(entity, record, this.registry.get(entity).fields, this.store.getState().snapshot.relationships, (type, id) => {

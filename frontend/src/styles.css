@@ -814,7 +814,9 @@ textarea:focus {
 .graph-node-shape {
   fill: var(--node-color, #171a21);
   stroke: var(--node-border-color, rgba(200, 168, 90, 0.45));
-  stroke-width: 1.5;
+  stroke-width: var(--node-border-width, 1.5);
+  stroke-dasharray: var(--node-border-dash, none);
+  stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
 
@@ -832,15 +834,6 @@ textarea:focus {
   stroke: var(--gold);
   stroke-width: 3;
   filter: drop-shadow(0 0 9px rgba(200, 168, 90, 0.34));
-}
-
-.graph-node.pinned .graph-node-shape {
-  stroke-dasharray: 5 3;
-}
-
-.graph-node.city-node.pinned .graph-node-shape,
-.graph-node.city-node.pinned circle {
-  stroke-dasharray: none;
 }
 
 .graph-node-label {
@@ -938,6 +931,23 @@ textarea:focus {
   overflow: auto;
 }
 
+.graph-edge-label-toggle {
+  position: absolute;
+  z-index: 6;
+  top: 12px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  background: rgba(17, 19, 24, .9);
+  font-size: 12px;
+  transform: translateX(-50%);
+}
+
 .record-preview-description {
   margin: 14px 0;
   padding-bottom: 14px;
@@ -979,6 +989,9 @@ textarea:focus {
 .legend-circle.character { width: 12px; height: 12px; background: #6a3037; }
 .legend-square { background: #43809b !important; }
 .legend-hexagon { background: #6f91c4 !important; clip-path: polygon(25% 7%, 75% 7%, 100% 50%, 75% 93%, 25% 93%, 0 50%); }
+.legend-diamond { width: 12px !important; height: 12px !important; margin: 1px; transform: rotate(45deg); }
+.legend-diamond.clue { background: #9b7b35 !important; }
+.legend-diamond.artifact { background: #aeb6c2 !important; }
 .legend-triangle { background: #86558f !important; clip-path: polygon(50% 4%, 96% 94%, 4% 94%); }
 .legend-star { color: var(--gold) !important; background: transparent !important; font-style: normal; font-size: 17px; }
 
@@ -2461,6 +2474,33 @@ textarea:focus {
   flex-basis: 100%;
 }
 
+.relationship-style-list {
+  display: grid;
+  gap: 10px;
+}
+
+.relationship-style-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.2fr) 90px minmax(140px, .8fr) minmax(190px, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.relationship-style-name {
+  display: grid;
+  align-self: center;
+  gap: 4px;
+}
+
+.relationship-style-name span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .segmented-control {
   display: inline-flex;
   padding: 3px;
@@ -2615,6 +2655,7 @@ textarea:focus {
   .graph-style-modal { width: calc(100vw - 20px); }
   .graph-head-actions,
   .graph-filter-templates { width: 100%; justify-items: stretch; }
+  .relationship-style-row { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 600px) {
@@ -2626,6 +2667,8 @@ textarea:focus {
   .segmented-control button {
     flex: 1;
   }
+
+  .relationship-style-row { grid-template-columns: 1fr; }
 
   .disposition-custom-grid { grid-template-columns: 1fr; }
   .knowledge-search-bar,

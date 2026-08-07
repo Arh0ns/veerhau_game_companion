@@ -17,6 +17,7 @@ class EntityType(StrEnum):
     EVENTS = "events"
     FACTS = "facts"
     CLUES = "clues"
+    ARTIFACTS = "artifacts"
     STORYLINES = "storylines"
     THEORIES = "theories"
     NOTES = "notes"
@@ -48,6 +49,7 @@ TAGGABLE_ENTITY_TYPES = (
     EntityType.EVENTS,
     EntityType.FACTS,
     EntityType.CLUES,
+    EntityType.ARTIFACTS,
     EntityType.STORYLINES,
     EntityType.THEORIES,
     EntityType.NOTES,
@@ -213,6 +215,18 @@ class Clue(ChronicleEntity):
 
 
 @dataclass(slots=True, kw_only=True)
+class Artifact(ChronicleEntity):
+    entity_type: ClassVar[EntityType] = EntityType.ARTIFACTS
+    title: str = ""
+    owner_id: str = ""
+    importance: str = ""
+    description: str = ""
+    notes: str = ""
+    tags: list[str] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True, kw_only=True)
 class Storyline(ChronicleEntity):
     entity_type: ClassVar[EntityType] = EntityType.STORYLINES
     title: str = ""
@@ -278,6 +292,8 @@ class NodeStyle:
     color: str = ""
     text_color: str = ""
     border_color: str = ""
+    border_style: str = ""
+    border_width: float = 0
 
 
 @dataclass(slots=True)

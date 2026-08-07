@@ -2,8 +2,9 @@ import type { AppStore } from "../application/store";
 import { SearchIndex, type SearchDocument } from "../domain/knowledge-search";
 import { activeGraphModeLayout } from "../domain/graph-layout-state";
 import type { EntityRegistry } from "../domain/registry";
+import { relationshipColor } from "../domain/relationship-style";
 import { projectedSystemTagPaths } from "../domain/structured-tags";
-import { type ChronicleRecord, type EntityType, type GraphLayout } from "../domain/types";
+import { type ChronicleRecord, type EntityType, type GraphLayout, type Relationship } from "../domain/types";
 import type { HttpChronicleGateway } from "../infrastructure/gateway";
 import { asString, asStringArray, escapeAttr, escapeHtml, truncate } from "../ui/dom";
 import type { ModalService, ToastService } from "./modal";
@@ -70,6 +71,29 @@ export class KnowledgeController {
     return `<header class="view-head"><div><h1>Шаблоны</h1><p>Заготовки для новых сущностей.</p></div></header><div class="grid cards">${templates.map((template) => `<article class="compact-card"><div class="card-kicker">${escapeHtml(this.registry.get(asString(template.targetType) as EntityType).singular)}</div><strong>${escapeHtml(asString(template.name))}</strong><button class="icon-button danger" data-action="delete-support-record" data-entity="entityTemplates" data-id="${escapeAttr(template.id)}" title="Удалить">×</button></article>`).join("") || `<p class="muted">Шаблон можно сохранить со страницы любого объекта.</p>`}</div>`;
   }
 
+  renderRelationshipStyles(): string {
+    const groups = new Map<string, Relationship[]>();
+    for (const relationship of this.store.getState().snapshot.relationships) {
+      const label = relationship.relationLabel.trim() || "связано";
+      const items = groups.get(label) ?? [];
+      items.push(relationship);
+      groups.set(label, items);
+    }
+    const rows = [...groups].sort(([first], [second]) => first.localeCompare(second, "ru")).map(([label, relationships]) => {
+      const sample = relationships[0]!;
+      return `<form class="relationship-style-row" data-relationship-style-form>
+        <input type="hidden" name="relationLabel" value="${escapeAttr(label)}">
+        <div class="relationship-style-name"><strong>${escapeHtml(label)}</strong><span>Связей: ${relationships.length}</span></div>
+        <label class="field"><span>Цвет</span><input type="color" name="edgeColor" value="${escapeAttr(relationshipColor(sample))}"></label>
+        <label class="field"><span>Тип линии</span><select name="lineStyle"><option value="solid" ${sample.lineStyle !== "dashed" ? "selected" : ""}>Сплошная</option><option value="dashed" ${sample.lineStyle === "dashed" ? "selected" : ""}>Пунктирная</option></select></label>
+        <label class="field"><span>Направление стрелки</span><select name="arrowDirection"><option value="" ${sample.arrowDirection ? "" : "selected"}>Без стрелки</option><option value="source-to-target" ${sample.arrowDirection === "source-to-target" ? "selected" : ""}>От первого ко второму</option><option value="target-to-source" ${sample.arrowDirection === "target-to-source" ? "selected" : ""}>От второго к первому</option></select></label>
+        <button class="btn primary" type="submit">Применить ко всем</button>
+      </form>`;
+    }).join("");
+    return `<header class="view-head"><div><h1>Стили связей</h1><p>Единое оформление всех существующих связей с одинаковым названием.</p></div></header>
+      <div class="relationship-style-list">${rows || `<p class="muted">Связей пока нет.</p>`}</div>`;
+  }
+
   async handleAction(element: HTMLElement): Promise<boolean> {
     const action = element.dataset.action;
     if (action === "search-tag" && element.dataset.tag) { this.runQuery(`тег:${element.dataset.tag}`); return true; }
@@ -89,9 +113,27 @@ export class KnowledgeController {
   }
 
   handleSubmit(form: HTMLFormElement): boolean {
-    if (!form.matches("[data-knowledge-search-form]")) return false;
-    this.runQuery(String(new FormData(form).get("query") ?? ""));
-    return true;
+    if (form.matches("[data-knowledge-search-form]")) {
+      this.runQuery(String(new FormData(form).get("query") ?? ""));
+      return true;
+    }
+    if (form.matches("[data-relationship-style-form]")) {
+      const data = new FormData(form);
+      const relationLabel = String(data.get("relationLabel") ?? "");
+      const patch: Partial<Relationship> = {
+        edgeColor: String(data.get("edgeColor") ?? ""),
+        lineStyle: String(data.get("lineStyle") ?? "solid") as Relationship["lineStyle"],
+        arrowDirection: String(data.get("arrowDirection") ?? "") as Relationship["arrowDirection"],
+      };
+      void this.perform(async () => {
+        const relationships = this.store.getState().snapshot.relationships.filter((item) => (item.relationLabel.trim() || "связано") === relationLabel);
+        await Promise.all(relationships.map((relationship) => this.gateway.updateRelationship(relationship.id, patch)));
+        await this.host.reload();
+        this.toast.show(`Стиль применён к связям «${relationLabel}»`);
+      });
+      return true;
+    }
+    return false;
   }
 
   search(query: string): void {

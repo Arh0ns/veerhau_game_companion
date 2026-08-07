@@ -22,6 +22,7 @@ export function graphNodeVisual(entity: EntityType, mode: GraphMode, scale = 1, 
     case "theories": return { shape: "triangle", radius: 13 * scale };
     case "locations": return { shape: "star", radius: (variant === "city" ? 15 : 8) * scale };
     case "clues": return { shape: "diamond", radius: 12 * scale };
+    case "artifacts": return { shape: "diamond", radius: 12 * scale };
     default: return { shape: "square", radius: 10 * scale };
   }
 }

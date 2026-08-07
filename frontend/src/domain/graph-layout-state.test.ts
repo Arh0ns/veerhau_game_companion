@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeGraphModeLayout, normalizeGraphModeLayouts, shouldPinMovedGraphNode } from "./graph-layout-state";
+import { activeGraphModeLayout, cloneGraphLayoutDraft, normalizeGraphModeLayouts, shouldPinMovedGraphNode } from "./graph-layout-state";
 import type { GraphLayout } from "./types";
 
 const legacyLayout = {
@@ -31,5 +31,14 @@ describe("graph mode layouts", () => {
   it("pins manual placements but releases Obsidian nodes back into physics", () => {
     expect(shouldPinMovedGraphNode("custom")).toBe(true);
     expect(shouldPinMovedGraphNode("obsidian")).toBe(false);
+  });
+
+  it("keeps a filter-template draft independent from the main graph", () => {
+    const main = normalizeGraphModeLayouts(legacyLayout).custom;
+    const draft = cloneGraphLayoutDraft(main);
+    draft.nodes[0]!.x = 777;
+    draft.viewport.zoom = 0.6;
+    expect(main.nodes[0]!.x).toBe(120);
+    expect(main.viewport.zoom).toBe(1.4);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EntityChoicePolicy, EntityRegistry } from "./registry";
+import { EntityChoicePolicy, EntityRegistry, RelationshipLabelPolicy } from "./registry";
 
 describe("entity registry policies", () => {
   it("allows characters and factions on investigation boards", () => {
@@ -45,6 +45,20 @@ describe("entity registry policies", () => {
         label: "Описание",
       });
     }
+  });
+
+  it("defines artifacts with a required character owner", () => {
+    const definition = new EntityRegistry().get("artifacts");
+    expect(definition).toMatchObject({ navigation: true, boardable: true, graphable: true });
+    expect(definition.fields.find((field) => field.key === "ownerId")).toMatchObject({
+      kind: "ref",
+      entity: "characters",
+      required: true,
+      relationLabel: "владеет",
+      currentRole: "target",
+    });
+    expect(definition.fields.find((field) => field.key === "description")?.required).not.toBe(true);
+    expect(new RelationshipLabelPolicy().presets("characters", "artifacts")).toContain("владеет");
   });
 
   it("uses one character-to-event relationship from both entity forms", () => {

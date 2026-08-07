@@ -1,7 +1,7 @@
 import type { AppStore } from "../application/store";
 import { OPTIONS, type EntityRegistry } from "../domain/registry";
 import { graphNodeVisual, regularPolygonPoints, starPoints, type GraphShape } from "../domain/graph-visuals";
-import { activeGraphModeLayout, shouldPinMovedGraphNode } from "../domain/graph-layout-state";
+import { activeGraphModeLayout, cloneGraphLayoutDraft, shouldPinMovedGraphNode } from "../domain/graph-layout-state";
 import { matchesGraphRecordFilters } from "../domain/graph-filter";
 import { GRAPH_CONTENT_TYPES, GRAPH_IMPORTANCE, GRAPH_UNCLASSIFIED, GraphStyleResolver, defaultGraphModeStyle, globalGraphStyleTargets, knownGraphSubtypes, type GraphStyleTarget } from "../domain/graph-style";
 import { collapseSecondaryFactionRelationships, reachableNodeKeys } from "../domain/graph-projection";
@@ -33,6 +33,8 @@ type RuntimeNode = SvgGraphNode & GraphNodePlacement & {
   color: string;
   textColor: string;
   borderColor: string;
+  borderStyle: "solid" | "dashed" | "dotted";
+  borderWidth: number;
   fontFamily: string;
   labelSize: number;
   labelWeight: number;
@@ -80,7 +82,7 @@ export class GraphController {
   private renderedNodes: RuntimeNode[] = [];
   private renderedRelationships: Relationship[] = [];
   private lastNodeClick = { key: "", at: 0 };
-  private filterTemplateEditor: { mode: GraphMode; templateId: string; name: string; savePlacement: boolean } | null = null;
+  private filterTemplateEditor: { mode: GraphMode; templateId: string; name: string; savePlacement: boolean; draftLayout: GraphModeLayout } | null = null;
 
   constructor(
     private readonly store: AppStore,
@@ -110,7 +112,7 @@ export class GraphController {
     const customActions = `<button class="btn" data-action="open-graph-style">Дефолтные стили</button>${layout.mode === "custom" ? `<button class="btn" data-action="reset-graph-layout">Пересобрать</button>` : ""}`;
     const space = this.activeGraphSpace(layout);
     return `<header class="view-head graph-view-head"><div><h1>Граф связей</h1><p>${layout.mode === "obsidian" ? "Свободный граф: связанные узлы притягиваются, подписи автоматически освобождают место." : "Крупные узлы, фильтры, индивидуальные стили и закреплённые позиции."}</p></div><div class="graph-head-actions"><div class="toolbar"><div class="segmented-control" aria-label="Режим графа"><button class="${layout.mode === "custom" ? "active" : ""}" data-action="set-graph-mode" data-mode="custom">Настраиваемый</button><button class="${layout.mode === "obsidian" ? "active" : ""}" data-action="set-graph-mode" data-mode="obsidian">Obsidian</button></div><button class="btn" data-action="bookmark-graph">В закладки</button>${customActions}</div>${this.renderFilterTemplateBlock(layout)}</div></header>
-      <div class="graph-layout graph-2d-layout"><div class="graph-wrap graph-2d-wrap" data-graph-wrap style="--graph-bg:${escapeAttr(modeStyle.backgroundColor)};--graph-grid:${escapeAttr(modeStyle.gridColor)};--graph-grid-opacity:${modeStyle.gridOpacity};--graph-edge-width:${modeStyle.edgeWidth};--graph-edge-opacity:${modeStyle.edgeOpacity};--graph-edge-label-size:${modeStyle.edgeLabelSize}px"><svg class="graph-svg" data-graph-svg viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" aria-label="Граф связей"><defs>${this.renderMarkers(relationships, modeStyle)}</defs><g data-graph-world transform="${this.worldTransform(space)}">${this.renderEdges(relationships, nodes, modeStyle, layout.mode)}${nodes.map((node) => this.renderNode(node, layout.mode, modeStyle)).join("")}</g></svg><div class="graph-hint">Перетащите фон для перемещения, колесо для масштаба.${layout.mode === "obsidian" ? " Перетащите узел, чтобы перестроить связанное окружение; после отпускания он остаётся свободным. Нажмите узел, чтобы выделить его окружение; ПКМ открывает действия." : " Перетащите узел, чтобы закрепить его позицию."}</div></div>${this.renderPanel(layout.mode, allNodes, relationships)}</div>`;
+      <div class="graph-layout graph-2d-layout"><div class="graph-wrap graph-2d-wrap" data-graph-wrap style="--graph-bg:${escapeAttr(modeStyle.backgroundColor)};--graph-grid:${escapeAttr(modeStyle.gridColor)};--graph-grid-opacity:${modeStyle.gridOpacity};--graph-edge-width:${modeStyle.edgeWidth};--graph-edge-opacity:${modeStyle.edgeOpacity};--graph-edge-label-size:${modeStyle.edgeLabelSize}px"><label class="graph-edge-label-toggle"><input type="checkbox" data-graph-edge-labels ${modeStyle.edgeLabels ? "checked" : ""}>Названия связей</label><svg class="graph-svg" data-graph-svg viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" aria-label="Граф связей"><defs>${this.renderMarkers(relationships, modeStyle)}</defs><g data-graph-world transform="${this.worldTransform(space)}">${this.renderEdges(relationships, nodes, modeStyle, layout.mode)}${nodes.map((node) => this.renderNode(node, layout.mode, modeStyle)).join("")}</g></svg><div class="graph-hint">Перетащите фон для перемещения, колесо для масштаба.${layout.mode === "obsidian" ? " Перетащите узел, чтобы перестроить связанное окружение; после отпускания он остаётся свободным. Нажмите узел, чтобы выделить его окружение; ПКМ открывает действия." : " Перетащите узел, чтобы закрепить его позицию."}</div></div>${this.renderPanel(layout.mode, allNodes, relationships)}</div>`;
   }
 
   bind(root: HTMLElement): void {
@@ -127,23 +129,32 @@ export class GraphController {
       onSelectEdge: (id) => { this.selectedEdgeId = id; this.selectedNodeKey = ""; this.host.navigate("graph"); },
       onContextNode: (key, clientX, clientY) => this.showContextMenu(root, key, clientX, clientY),
       onMoveNode: (key, x, y) => this.moveNode(space, layout, key, x, y),
-      onViewportChange: (viewport) => { space.viewport = { ...viewport }; this.scheduleSave(layout); },
+      onViewportChange: (viewport) => { space.viewport = { ...viewport }; this.schedulePlacementSave(layout); },
       onPositionsChanged: (nodes) => {
         this.syncPositions(space, nodes);
-        this.scheduleSave(layout);
+        this.schedulePlacementSave(layout);
       },
     });
     this.scene.bind();
     this.bindGraphSearch(root);
     this.bindGraphFilters(root, layout, layout.mode === "custom");
     this.bindFilterTemplates(root, layout);
+    root.querySelector<HTMLInputElement>("[data-graph-edge-labels]")?.addEventListener("change", (event) => {
+      const visible = (event.target as HTMLInputElement).checked;
+      layout.modeStyles.custom = this.styleResolver.mode(layout.modeStyles.custom, "custom");
+      layout.modeStyles.obsidian = this.styleResolver.mode(layout.modeStyles.obsidian, "obsidian");
+      layout.modeStyles.custom.edgeLabels = visible;
+      layout.modeStyles.obsidian.edgeLabels = visible;
+      this.scheduleSave(layout);
+      this.host.navigate("graph");
+    });
     root.querySelector<HTMLInputElement>("[data-obsidian-attraction]")?.addEventListener("change", (event) => {
       layout.modeStyles.obsidian = this.styleResolver.mode(layout.modeStyles.obsidian, "obsidian");
       layout.modeStyles.obsidian.physics.linkForce = Number((event.target as HTMLInputElement).value);
       this.scheduleSave(layout);
       this.host.navigate("graph");
     });
-    for (const input of root.querySelectorAll<HTMLInputElement>("[data-graph-node-style]")) input.addEventListener("change", () => this.updateSelectedNodeStyle(root));
+    for (const input of root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-graph-node-style]")) input.addEventListener("change", () => this.updateSelectedNodeStyle(root));
     root.querySelector<HTMLSelectElement>("[data-graph-edge-arrow]")?.addEventListener("change", (event) => void this.updateSelectedEdge({ arrowDirection: (event.target as HTMLSelectElement).value as Relationship["arrowDirection"] }));
     root.querySelector<HTMLInputElement>("[data-graph-edge-color]")?.addEventListener("change", (event) => void this.updateSelectedEdge({ edgeColor: (event.target as HTMLInputElement).value }));
     root.querySelector<HTMLSelectElement>("[data-graph-edge-line-style]")?.addEventListener("change", (event) => void this.updateSelectedEdge({ lineStyle: (event.target as HTMLSelectElement).value as Relationship["lineStyle"] }));
@@ -172,7 +183,8 @@ export class GraphController {
     if (action === "create-filter-template") {
       const layout = this.layout();
       if (layout) {
-        this.filterTemplateEditor = { mode: layout.mode, templateId: "", name: "", savePlacement: false };
+        const draftLayout = cloneGraphLayoutDraft(this.activeGraphSpace(layout));
+        this.filterTemplateEditor = { mode: layout.mode, templateId: "", name: "", savePlacement: false, draftLayout };
         this.host.navigate("graph");
       }
       return true;
@@ -183,7 +195,8 @@ export class GraphController {
         const activeId = this.activeFilterTemplateId(layout, layout.mode);
         const template = this.filterTemplates(layout).find((item) => item.id === activeId && item.mode === layout.mode);
         if (template) {
-          this.filterTemplateEditor = { mode: layout.mode, templateId: template.id, name: template.name, savePlacement: Boolean(template.layout) };
+          const draftLayout = cloneGraphLayoutDraft(template.layout ?? activeGraphModeLayout(layout, layout.mode));
+          this.filterTemplateEditor = { mode: layout.mode, templateId: template.id, name: template.name, savePlacement: Boolean(template.layout), draftLayout };
           this.host.navigate("graph");
         }
       }
@@ -252,7 +265,7 @@ export class GraphController {
       const layout = this.layout();
       const placement = layout ? activeGraphModeLayout(layout, layout.mode).nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey) : undefined;
       if (layout && placement) {
-        delete placement.color; delete placement.textColor; delete placement.borderColor; placement.scale = 1;
+        delete placement.color; delete placement.textColor; delete placement.borderColor; delete placement.borderStyle; delete placement.borderWidth; placement.scale = 1;
         await this.saveLayout(layout);
         this.host.navigate("graph");
       }
@@ -296,6 +309,7 @@ export class GraphController {
     const mainSpace = activeGraphModeLayout(layout, layout.mode);
     const placements = new Map(space.nodes.map((node) => [entityKey(node.entity, node.id), node]));
     const mainPlacements = new Map(mainSpace.nodes.map((node) => [entityKey(node.entity, node.id), node]));
+    const editingDraft = this.filterTemplateEditor?.mode === layout.mode;
     const graphRecords = this.registry.graphable().flatMap((definition) => this.store.records(definition.type).map((record) => ({ entity: definition.type, record })));
     const coterie = graphRecords.find((item) => item.entity === "coteries");
     const memberIds = new Set<string>();
@@ -304,8 +318,7 @@ export class GraphController {
       if (relationship.sourceType === "coteries" && relationship.sourceId === coterie.record.id && relationship.targetType === "characters") memberIds.add(relationship.targetId);
       if (relationship.targetType === "coteries" && relationship.targetId === coterie.record.id && relationship.sourceType === "characters") memberIds.add(relationship.sourceId);
     }
-    let added = false;
-    let pinStateChanged = false;
+    let persistentPlacementChanged = false;
     const result: RuntimeNode[] = [];
     for (let index = 0; index < graphRecords.length; index += 1) {
       const { entity, record } = graphRecords[index]!;
@@ -313,19 +326,22 @@ export class GraphController {
       let stylePlacement = mainPlacements.get(key);
       if (!stylePlacement) {
         stylePlacement = this.initialPlacement(entity, record.id, index, graphRecords.length, memberIds);
-        mainSpace.nodes.push(stylePlacement);
+        if (!editingDraft) mainSpace.nodes.push(stylePlacement);
         mainPlacements.set(key, stylePlacement);
-        added = true;
+        if (!editingDraft) persistentPlacementChanged = true;
       }
       let placement = placements.get(key);
       if (!placement) {
         placement = space === mainSpace ? stylePlacement : { entity, id: record.id, x: stylePlacement.x, y: stylePlacement.y, scale: 1, pinned: stylePlacement.pinned };
         if (space !== mainSpace) space.nodes.push(placement);
         placements.set(key, placement);
-        added = true;
+        if (space === mainSpace) persistentPlacementChanged = true;
       }
       const shouldBePinned = layout.mode === "obsidian" ? false : placement.pinned;
-      if (placement.pinned !== shouldBePinned) { placement.pinned = shouldBePinned; pinStateChanged = true; }
+      if (placement.pinned !== shouldBePinned) {
+        placement.pinned = shouldBePinned;
+        if (space === mainSpace) persistentPlacementChanged = true;
+      }
       const runtimePlacement: GraphNodePlacement = placement;
       const definition = this.registry.get(entity);
       const title = definition.title(record);
@@ -352,13 +368,15 @@ export class GraphController {
         color: resolved.color,
         textColor: resolved.textColor,
         borderColor: resolved.borderColor,
+        borderStyle: resolved.borderStyle,
+        borderWidth: resolved.borderWidth,
         fontFamily: resolved.fontFamily,
         labelSize: resolved.labelSize,
         labelWeight: resolved.labelWeight,
         mass: resolved.mass,
       });
     }
-    if (added || pinStateChanged) this.scheduleSave(layout);
+    if (persistentPlacementChanged) this.scheduleSave(layout);
     return result;
   }
 
@@ -415,7 +433,23 @@ export class GraphController {
     const label = mode === "custom"
       ? `<text class="graph-node-label custom-node-label" text-anchor="middle" y="4">${escapeHtml(truncate(node.title, 22))}</text>`
       : `<text class="graph-node-label obsidian-node-label" x="${node.radius + 6}" y="4">${escapeHtml(truncate(node.title, 34))}</text>`;
-    return `<g class="graph-node ${mode === "obsidian" ? "obsidian-node" : "custom-node"} ${city ? "city-node" : ""} ${selected ? "selected" : ""} ${dimmed ? "focus-dimmed" : ""} ${node.pinned ? "pinned" : ""} ${modeStyle.labelOutline ? "label-outline" : ""}" data-graph-node data-key="${escapeAttr(node.key)}" data-entity="${node.entity}" transform="translate(${node.x},${node.y})" style="--node-color:${escapeAttr(node.color)};--node-text-color:${escapeAttr(node.textColor)};--node-border-color:${escapeAttr(node.borderColor)};--node-font:${escapeAttr(node.fontFamily)};--node-label-size:${node.labelSize}px;--node-label-weight:${node.labelWeight};--node-label-style:${modeStyle.labelItalic ? "italic" : "normal"}">${shape}${label}<title>${escapeHtml(`${node.subtitle}: ${node.title}`)}</title></g>`;
+    return `<g class="graph-node ${mode === "obsidian" ? "obsidian-node" : "custom-node"} ${city ? "city-node" : ""} ${selected ? "selected" : ""} ${dimmed ? "focus-dimmed" : ""} ${node.pinned ? "pinned" : ""} ${modeStyle.labelOutline ? "label-outline" : ""}" data-graph-node data-key="${escapeAttr(node.key)}" data-entity="${node.entity}" transform="translate(${node.x},${node.y})" style="--node-color:${escapeAttr(node.color)};--node-text-color:${escapeAttr(node.textColor)};--node-border-color:${escapeAttr(node.borderColor)};--node-border-width:${node.borderWidth};--node-border-dash:${node.borderStyle === "dashed" ? "7 5" : node.borderStyle === "dotted" ? "2 4" : "none"};--node-font:${escapeAttr(node.fontFamily)};--node-label-size:${node.labelSize}px;--node-label-weight:${node.labelWeight};--node-label-style:${modeStyle.labelItalic ? "italic" : "normal"}">${shape}${label}<title>${escapeHtml(this.nodeTooltip(node))}</title></g>`;
+  }
+
+  private nodeTooltip(node: RuntimeNode): string {
+    const lines = [`${node.subtitle}: ${node.title}`, `Важность: ${asString(node.record.importance) || "Обычная"}`];
+    if (node.entity === "locations") {
+      const parent = asString(node.record.parentCityId) ? this.store.record("locations", asString(node.record.parentCityId)) : undefined;
+      lines.push(`Секта: ${asString(node.record.sect) || asString(parent?.sect) || "Не известно"}`);
+    }
+    if (node.entity === "characters") {
+      const species = asString(node.record.species) || "Не известно";
+      lines.push(`Вид: ${species}`);
+      if (species === "Вампир" || asString(node.record.vampireClan)) lines.push(`Клан: ${asString(node.record.vampireClan) || "Не известно"}`);
+      if (species === "Гару" || asString(node.record.garouTribe)) lines.push(`Племя: ${asString(node.record.garouTribe) || "Не известно"}`);
+    }
+    if (node.entity === "events" || node.entity === "facts") lines.push(`Тип: ${asString(node.record.contentType) || GRAPH_UNCLASSIFIED}`);
+    return lines.join("\n");
   }
 
   private highlightedNodeKeys(): Set<string> {
@@ -529,7 +563,7 @@ export class GraphController {
   }
 
   private renderGraphLegend(): string {
-    return `<div class="graph-legend"><span><i class="legend-circle faction"></i>Фракция</span><span><i class="legend-circle character"></i>Персонаж</span><span><i class="legend-hexagon"></i>Событие</span><span><i class="legend-square"></i>Факт</span><span><i class="legend-triangle"></i>Гипотеза</span><span><i class="legend-star">★</i>Локация</span></div>`;
+    return `<div class="graph-legend"><span><i class="legend-circle faction"></i>Фракция</span><span><i class="legend-circle character"></i>Персонаж</span><span><i class="legend-hexagon"></i>Событие</span><span><i class="legend-square"></i>Факт</span><span><i class="legend-diamond clue"></i>Улика</span><span><i class="legend-diamond artifact"></i>Артефакт</span><span><i class="legend-triangle"></i>Гипотеза</span><span><i class="legend-star">★</i>Локация</span></div>`;
   }
 
   private renderLocalGraphControls(nodes: RuntimeNode[]): string {
@@ -537,7 +571,7 @@ export class GraphController {
   }
 
   private renderNodeInspector(node: RuntimeNode, mode: GraphMode): string {
-    const styleControls = `<label class="field"><span>Цвет узла</span><input type="color" data-graph-node-style data-style-key="color" value="${escapeAttr(node.color)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="color"]')}</label><label class="field"><span>Цвет текста</span><input type="color" data-graph-node-style data-style-key="textColor" value="${escapeAttr(node.textColor)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="textColor"]')}</label><label class="field"><span>Цвет контура</span><input type="color" data-graph-node-style data-style-key="borderColor" value="${escapeAttr(node.borderColor)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="borderColor"]')}</label><label class="field"><span>Размер</span><input type="range" min="60" max="220" step="5" data-graph-node-style data-style-key="scale" value="${Math.round((node.scale || 1) * 100)}"></label><button class="btn ghost" data-action="reset-graph-node-style">Сбросить стиль узла</button>`;
+    const styleControls = `<label class="field"><span>Цвет узла</span><input type="color" data-graph-node-style data-style-key="color" value="${escapeAttr(node.color)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="color"]')}</label><label class="field"><span>Цвет текста</span><input type="color" data-graph-node-style data-style-key="textColor" value="${escapeAttr(node.textColor)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="textColor"]')}</label><label class="field"><span>Цвет контура</span><input type="color" data-graph-node-style data-style-key="borderColor" value="${escapeAttr(node.borderColor)}">${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-style-key="borderColor"]')}</label><label class="field"><span>Тип контура</span><select data-graph-node-style data-style-key="borderStyle"><option value="solid" ${node.borderStyle === "solid" ? "selected" : ""}>Сплошной</option><option value="dashed" ${node.borderStyle === "dashed" ? "selected" : ""}>Пунктирный</option><option value="dotted" ${node.borderStyle === "dotted" ? "selected" : ""}>Точечный</option></select></label><label class="field"><span>Толщина контура</span><input type="number" min="0.5" max="10" step="0.5" data-graph-node-style data-style-key="borderWidth" value="${node.borderWidth}"></label><label class="field"><span>Размер</span><input type="range" min="60" max="220" step="5" data-graph-node-style data-style-key="scale" value="${Math.round((node.scale || 1) * 100)}"></label><button class="btn ghost" data-action="reset-graph-node-style">Сбросить стиль узла</button>`;
     return `<section class="graph-inspector"><h3>${escapeHtml(node.title)}</h3><p class="tiny muted">${escapeHtml(node.subtitle)}${mode === "obsidian" && node.pinned ? " · закреплён" : ""}</p>${styleControls}<div class="toolbar"><button class="btn" data-action="preview-graph-node">Карточка</button><button class="btn" data-action="edit-graph-node">Редактировать</button><button class="btn" data-action="open-graph-node">Открыть полностью</button></div></section>`;
   }
 
@@ -673,9 +707,7 @@ export class GraphController {
 
   private savePreferences(layout: GraphLayout, activeTemplateId?: string): void {
     const filters = this.currentFilterSettings();
-    const resolvedTemplateId = activeTemplateId ?? (
-      this.filterTemplateEditor?.mode === layout.mode ? this.filterTemplateEditor.templateId : ""
-    );
+    const resolvedTemplateId = activeTemplateId ?? this.activeFilterTemplateId(layout, layout.mode);
     const modeFilters = { ...((layout.filters.modeFilters as Record<string, unknown> | undefined) ?? {}), [layout.mode]: filters };
     const activeFilterTemplates = { ...((layout.filters.activeFilterTemplates as Record<string, unknown> | undefined) ?? {}), [layout.mode]: resolvedTemplateId };
     layout.filters = { ...layout.filters, modeFilters, activeFilterTemplates, spaceVersion: 3 };
@@ -762,23 +794,10 @@ export class GraphController {
   }
 
   private activeGraphSpace(layout: GraphLayout, mode: GraphMode = layout.mode): GraphModeLayout {
+    if (this.filterTemplateEditor?.mode === mode) return this.filterTemplateEditor.draftLayout;
     const activeId = this.activeFilterTemplateId(layout, mode);
     const template = this.filterTemplates(layout).find((item) => item.id === activeId && item.mode === mode);
     return template?.layout ?? activeGraphModeLayout(layout, mode);
-  }
-
-  private cloneGraphPlacement(space: GraphModeLayout): GraphModeLayout {
-    return {
-      nodes: space.nodes.map((node) => ({
-        entity: node.entity,
-        id: node.id,
-        x: node.x,
-        y: node.y,
-        scale: 1,
-        pinned: node.pinned,
-      })),
-      viewport: { ...space.viewport },
-    };
   }
 
   private activeFilterTemplateId(layout: GraphLayout, mode: GraphMode): string {
@@ -804,7 +823,7 @@ export class GraphController {
       name,
       mode: layout.mode,
       filters: this.currentFilterSettings(),
-      ...(editor.savePlacement ? { layout: this.cloneGraphPlacement(this.activeGraphSpace(layout)) } : {}),
+      ...(editor.savePlacement ? { layout: cloneGraphLayoutDraft(editor.draftLayout) } : {}),
     };
     const index = templates.findIndex((item) => item.id === id);
     if (index >= 0) templates[index] = template; else templates.push(template);
@@ -841,6 +860,7 @@ export class GraphController {
     if (mode === "obsidian") {
       const fixed = defaultGraphModeStyle("obsidian");
       fixed.physics.linkForce = Number(layout.modeStyles.obsidian?.physics?.linkForce ?? fixed.physics.linkForce);
+      fixed.edgeLabels = layout.modeStyles.obsidian?.edgeLabels ?? layout.modeStyles.custom?.edgeLabels ?? true;
       fixed.entityTypeStyles = { ...(layout.modeStyles.custom?.entityTypeStyles ?? {}) };
       return fixed;
     }
@@ -900,6 +920,7 @@ export class GraphController {
       this.collectAllStyles(root, styles);
       const obsidian = this.styleResolver.mode(layout.modeStyles.obsidian, "obsidian");
       obsidian.entityTypeStyles = { ...styles.custom.entityTypeStyles };
+      obsidian.edgeLabels = styles.custom.edgeLabels;
       layout.modeStyles = { custom: styles.custom, obsidian };
       this.modal.close();
       void this.saveLayout(layout).then(() => this.host.navigate("graph"));
@@ -964,6 +985,8 @@ export class GraphController {
       <label class="field"><span>Насыщенность</span><select data-type-style-control data-type-style="labelWeight" ${enabled ? "" : "disabled"}>${[400, 500, 600, 700, 800].map((weight) => `<option value="${weight}" ${(current?.labelWeight || modeStyle.labelWeight) === weight ? "selected" : ""}>${weight}</option>`).join("")}</select></label>`;
     return `<div class="type-style-pane" data-style-type-pane="${escapeAttr(target.key)}" ${visible ? "" : "hidden"}><div class="panel-head"><label class="check-pill"><input type="checkbox" data-style-type-enabled ${enabled ? "checked" : ""}>Собственные настройки: ${escapeHtml(target.label)}</label><button class="btn ghost small" type="button" data-style-reset-type data-mode="${mode}" data-style-key="${escapeAttr(target.key)}">Сбросить</button></div><div class="form-grid compact-grid">
       <label class="field"><span>Контур</span><input type="color" data-type-style-control data-type-style="borderColor" value="${escapeAttr(current?.borderColor || fallback.borderColor)}" ${enabled ? "" : "disabled"}>${this.renderGraphColorSwatches(this.usedObjectColors(), '[data-type-style="borderColor"]')}</label>
+      <label class="field"><span>Тип контура</span><select data-type-style-control data-type-style="borderStyle" ${enabled ? "" : "disabled"}><option value="solid" ${(current?.borderStyle || fallback.borderStyle) === "solid" ? "selected" : ""}>Сплошной</option><option value="dashed" ${(current?.borderStyle || fallback.borderStyle) === "dashed" ? "selected" : ""}>Пунктирный</option><option value="dotted" ${(current?.borderStyle || fallback.borderStyle) === "dotted" ? "selected" : ""}>Точечный</option></select></label>
+      <label class="field"><span>Толщина контура</span><input type="number" min="0.5" max="10" step="0.5" data-type-style-control data-type-style="borderWidth" value="${current?.borderWidth || fallback.borderWidth}" ${enabled ? "" : "disabled"}></label>
       ${identityControls}
       <label class="field"><span>Множитель размера узла</span><input type="number" min="0.4" max="4" step="0.1" data-type-style-control data-type-style="scale" value="${current?.scale || 1}" ${enabled ? "" : "disabled"}><small class="field-help">Последовательно умножается на размер типа и другие стилевые слои.</small></label>
       <label class="field"><span>Множитель физической массы</span><input type="number" min="0.25" max="8" step="0.25" data-type-style-control data-type-style="mass" value="${current?.mass || 1}" ${enabled ? "" : "disabled"}><small class="field-help">Последовательно умножается; тяжёлый узел меньше смещается.</small></label>
@@ -1007,6 +1030,8 @@ export class GraphController {
         styles[mode].entityTypeStyles[styleKey] = {
           color: control("color")?.value,
           borderColor: control("borderColor")?.value,
+          borderStyle: control("borderStyle")?.value as "solid" | "dashed" | "dotted" | undefined,
+          borderWidth: Number(control("borderWidth")?.value),
           textColor: control("textColor")?.value,
           fontFamily: control("fontFamily")?.value.trim(),
           labelSize: Number(control("labelSize")?.value),
@@ -1022,7 +1047,7 @@ export class GraphController {
     const placement = space.nodes.find((node) => entityKey(node.entity, node.id) === key);
     if (!placement) return;
     placement.x = x; placement.y = y; placement.pinned = shouldPinMovedGraphNode(layout.mode);
-    this.scheduleSave(layout);
+    this.schedulePlacementSave(layout);
   }
 
   private syncPositions(space: GraphModeLayout, nodes: SvgGraphNode[]): void {
@@ -1039,12 +1064,14 @@ export class GraphController {
     if (!layout || !this.selectedNodeKey) return;
     const placement = activeGraphModeLayout(layout, layout.mode).nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey);
     if (!placement) return;
-    for (const input of root.querySelectorAll<HTMLInputElement>("[data-graph-node-style]")) {
+    for (const input of root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-graph-node-style]")) {
       const key = input.dataset.styleKey;
       if (key === "scale") placement.scale = Number(input.value) / 100;
       else if (key === "color") placement.color = input.value;
       else if (key === "textColor") placement.textColor = input.value;
       else if (key === "borderColor") placement.borderColor = input.value;
+      else if (key === "borderStyle") placement.borderStyle = input.value as GraphNodePlacement["borderStyle"];
+      else if (key === "borderWidth") placement.borderWidth = Number(input.value);
     }
     const activePlacement = this.activeGraphSpace(layout).nodes.find((node) => entityKey(node.entity, node.id) === this.selectedNodeKey);
     if (activePlacement) activePlacement.pinned = shouldPinMovedGraphNode(layout.mode);
@@ -1072,7 +1099,7 @@ export class GraphController {
       node.pinned = false;
     }
     space.viewport = { x: 0, y: 0, zoom: 1 };
-    await this.saveLayout(layout);
+    if (this.filterTemplateEditor?.mode !== layout.mode) await this.saveLayout(layout);
     this.host.navigate("graph");
   }
 
@@ -1083,6 +1110,11 @@ export class GraphController {
   private scheduleSave(layout: GraphLayout): void {
     window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => void this.saveLayout(layout), 400);
+  }
+
+  private schedulePlacementSave(layout: GraphLayout): void {
+    if (this.filterTemplateEditor?.mode === layout.mode) return;
+    this.scheduleSave(layout);
   }
 
   private async saveLayout(layout: GraphLayout): Promise<void> {

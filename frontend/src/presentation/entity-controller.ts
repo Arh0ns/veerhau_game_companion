@@ -4,6 +4,7 @@ import { MentionIndex, SearchIndex, type SearchDocument } from "../domain/knowle
 import { EntityChoicePolicy, EntityRegistry, RelationshipLabelPolicy, type FieldDefinition } from "../domain/registry";
 import { defaultRelationshipColor, relationshipColor } from "../domain/relationship-style";
 import { projectedSystemTagPaths } from "../domain/structured-tags";
+import { confirmedTheoryFactPayload, replaceTheoryInRelationship, replaceTheoryNodeReferences } from "../domain/theory-conversion";
 import type { ChronicleRecord, EntityType, Relationship } from "../domain/types";
 import { HttpChronicleGateway } from "../infrastructure/gateway";
 import { asString, asStringArray, escapeAttr, escapeHtml, truncate } from "../ui/dom";
@@ -160,7 +161,7 @@ export class EntityController {
     entity: EntityType,
     id?: string,
     preset: Record<string, unknown> = {},
-    afterSave?: (record: ChronicleRecord) => Promise<void> | void,
+    afterSave?: (record: ChronicleRecord, entity: EntityType) => Promise<void> | void,
     afterCancel?: () => void,
     relationshipPreset: ReadonlyMap<string, readonly string[]> = new Map(),
   ): void {
@@ -177,10 +178,7 @@ export class EntityController {
       "modal-wide",
     );
     if (!record) this.bindTemplatePicker(root, entity, effectivePreset);
-    if (afterCancel) root.addEventListener("click", (event) => {
-      const target = event.target;
-      if (target === root || (target instanceof Element && target.closest("[data-modal-close]"))) queueMicrotask(afterCancel);
-    });
+    if (afterCancel) root.addEventListener("modalcancel", () => queueMicrotask(afterCancel));
     this.forms.bindConditionalFields(root);
     const form = root.querySelector<HTMLFormElement>("[data-entity-form]");
     for (const button of root.querySelectorAll<HTMLButtonElement>("[data-create-related]")) button.addEventListener("click", () => {
@@ -190,11 +188,11 @@ export class EntityController {
       if (!targetEntity || !fieldKey) return;
       const draft = this.forms.collect(form);
       const selections = new Map([...draft.relationships].map(([key, ids]) => [key, [...ids]]));
-      const reopen = (created?: ChronicleRecord) => {
-        if (created) selections.set(fieldKey, [...new Set([...(selections.get(fieldKey) ?? []), created.id])]);
+      const reopen = (created?: ChronicleRecord, createdEntity = targetEntity) => {
+        if (created && createdEntity === targetEntity) selections.set(fieldKey, [...new Set([...(selections.get(fieldKey) ?? []), created.id])]);
         this.openEntityForm(entity, id, draft.payload, afterSave, afterCancel, selections);
       };
-      this.openEntityForm(targetEntity, undefined, {}, (created) => reopen(created), () => reopen());
+      this.openEntityForm(targetEntity, undefined, {}, (created, createdEntity) => reopen(created, createdEntity), () => reopen());
     });
     form?.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -213,10 +211,18 @@ export class EntityController {
             ? await this.gateway.updateRecord(entity, record.id, collected.payload)
             : await this.gateway.create(entity, collected.payload);
           await this.forms.syncRelationships(entity, saved.id, collected.relationships);
+          let resultingEntity = entity;
+          let resultingRecord = saved;
+          if (entity === "theories" && collected.payload.status === "Подтверждена") {
+            await this.host.reload();
+            resultingRecord = await this.convertTheoryToFact(saved);
+            resultingEntity = "facts";
+            this.toast.show("Гипотеза преобразована в факт");
+          }
           this.modal.close();
           await this.host.reload();
-          await afterSave?.(saved);
-          if (!afterSave) this.host.navigate(returnRoute);
+          await afterSave?.(resultingRecord, resultingEntity);
+          if (!afterSave) this.host.navigate(resultingEntity === entity ? returnRoute : `detail:${resultingEntity}:${resultingRecord.id}`);
         } finally {
           if (submit) submit.disabled = false;
         }
@@ -350,7 +356,7 @@ export class EntityController {
         targetType,
         undefined,
         {},
-        (saved) => this.openRelationshipEditor(sourceType, sourceId, relationship, undefined, { ...savedDraft, targetId: saved.id }),
+        (saved, savedEntity) => this.openRelationshipEditor(sourceType, sourceId, relationship, undefined, { ...savedDraft, targetType: savedEntity, targetId: saved.id }),
         () => this.openRelationshipEditor(sourceType, sourceId, relationship, undefined, savedDraft),
       );
     });
@@ -398,6 +404,28 @@ export class EntityController {
       ${tags.length ? `<div class="tag-row">${tags.map((tag) => `<button class="tag-chip" data-action="search-tag" data-tag="${escapeAttr(tag)}">#${escapeHtml(tag)}</button>`).join("")}</div>` : ""}
       <div class="card-actions"><button class="btn small ghost" data-action="edit-record" data-entity="${entity}" data-id="${escapeAttr(record.id)}">Изменить</button></div>
     </article>`;
+  }
+
+  private async convertTheoryToFact(theory: ChronicleRecord): Promise<ChronicleRecord> {
+    const relationships = this.relationshipsFor("theories", theory.id);
+    const fact = await this.gateway.create("facts", confirmedTheoryFactPayload(theory));
+    for (const relationship of relationships) {
+      await this.gateway.upsert(replaceTheoryInRelationship(relationship, theory.id, fact.id));
+    }
+    for (const board of this.store.records("investigationBoards")) {
+      const items = replaceTheoryNodeReferences(board.items, theory.id, fact.id);
+      if (JSON.stringify(items) !== JSON.stringify(board.items)) await this.gateway.updateRecord("investigationBoards", board.id, { items });
+    }
+    for (const layout of this.store.records("graphLayouts")) {
+      const nodes = replaceTheoryNodeReferences(layout.nodes, theory.id, fact.id);
+      const modeLayouts = replaceTheoryNodeReferences(layout.modeLayouts, theory.id, fact.id);
+      const filters = replaceTheoryNodeReferences(layout.filters, theory.id, fact.id);
+      if (JSON.stringify([nodes, modeLayouts, filters]) !== JSON.stringify([layout.nodes, layout.modeLayouts, layout.filters])) {
+        await this.gateway.updateRecord("graphLayouts", layout.id, { nodes, modeLayouts, filters });
+      }
+    }
+    await this.gateway.delete("theories", theory.id);
+    return fact;
   }
 
   private usedRelationshipColors(): string[] {

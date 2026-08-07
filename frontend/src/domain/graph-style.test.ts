@@ -32,6 +32,16 @@ describe("GraphStyleResolver", () => {
     expect(resolver.node("locations", { id: "place", level: "Место в городе", createdAt: "", updatedAt: "" }, locationPlacement, defaultGraphModeStyle("custom")).color).toBe("#aeb6c2");
   });
 
+  it("uses silver for artifacts by default", () => {
+    const artifactPlacement = { ...placement, entity: "artifacts" as const };
+    expect(new GraphStyleResolver().node(
+      "artifacts",
+      { id: "relic", createdAt: "", updatedAt: "" },
+      artifactPlacement,
+      defaultGraphModeStyle("custom"),
+    ).color).toBe("#aeb6c2");
+  });
+
   it("colors city borders by sect", () => {
     const resolver = new GraphStyleResolver();
     const locationPlacement = { ...placement, entity: "locations" as const };
@@ -53,6 +63,22 @@ describe("GraphStyleResolver", () => {
       defaultGraphModeStyle("custom"),
     );
     expect(resolved.borderColor).toBe("#abcdef");
+  });
+
+  it("supports an individual node border type and width", () => {
+    const resolved = new GraphStyleResolver().node(
+      "characters",
+      record,
+      { ...placement, borderStyle: "dotted", borderWidth: 4.5 },
+      defaultGraphModeStyle("custom"),
+    );
+    expect(resolved.borderStyle).toBe("dotted");
+    expect(resolved.borderWidth).toBe(4.5);
+  });
+
+  it("shows relationship names by default", () => {
+    expect(defaultGraphModeStyle("custom").edgeLabels).toBe(true);
+    expect(defaultGraphModeStyle("obsidian").edgeLabels).toBe(true);
   });
 
   it("multiplies the global importance layer over the entity style", () => {

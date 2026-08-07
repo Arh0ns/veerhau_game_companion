@@ -99,7 +99,7 @@ export class AppController implements EntityControllerHost {
       <div class="nav-section">Исследование</div>
       ${button("board", "Доска расследования")}${button("graph", "Граф связей")}${button("timeline", "Таймлайн")}
       <div class="nav-section">База знаний</div>
-      ${button("search", "Поиск")}${button("tags", "Теги")}${button("bookmarks", "Закладки", this.store.records("bookmarks").length)}${button("templates", "Шаблоны", this.store.records("entityTemplates").length)}`;
+      ${button("search", "Поиск")}${button("tags", "Теги")}${button("relationship-styles", "Стили связей")}${button("bookmarks", "Закладки", this.store.records("bookmarks").length)}${button("templates", "Шаблоны", this.store.records("entityTemplates").length)}`;
   }
 
   private renderRoute(): void {
@@ -113,6 +113,7 @@ export class AppController implements EntityControllerHost {
     else if (route === "timeline") this.content.innerHTML = this.renderTimeline();
     else if (route === "search") this.content.innerHTML = this.knowledge.renderSearch();
     else if (route === "tags") this.content.innerHTML = this.knowledge.renderTags();
+    else if (route === "relationship-styles") this.content.innerHTML = this.knowledge.renderRelationshipStyles();
     else if (route === "bookmarks") this.content.innerHTML = this.knowledge.renderBookmarks();
     else if (route === "templates") this.content.innerHTML = this.knowledge.renderTemplates();
     else if (route === "board") this.content.innerHTML = this.board.render();

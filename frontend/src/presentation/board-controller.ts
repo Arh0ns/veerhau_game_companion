@@ -342,7 +342,7 @@ export class BoardController {
     menu.dataset.boardContext = "";
     menu.style.left = `${Math.min(event.clientX, window.innerWidth - 280)}px`;
     menu.style.top = `${Math.min(event.clientY, window.innerHeight - 360)}px`;
-    const createButtons = `<div class="board-context-section"><strong>Создать</strong><div class="board-context-create-grid">${(["notes", "clues", "facts", "theories"] as EntityType[]).map((entity) => `<button data-create-entity="${entity}">${escapeHtml(this.registry.get(entity).singular)}</button>`).join("")}</div></div>`;
+    const createButtons = `<div class="board-context-section"><strong>Создать</strong><div class="board-context-create-grid">${(["notes", "clues", "artifacts", "facts", "theories"] as EntityType[]).map((entity) => `<button data-create-entity="${entity}">${escapeHtml(this.registry.get(entity).singular)}</button>`).join("")}</div></div>`;
     if (card) {
       const key = card.dataset.key ?? "";
       const item = this.currentBoard()?.items.find((node) => entityKey(node.entity, node.id) === key);
@@ -381,11 +381,11 @@ export class BoardController {
     for (const button of menu.querySelectorAll<HTMLElement>("[data-create-entity]")) button.addEventListener("click", () => {
       const entity = button.dataset.createEntity as EntityType;
       menu.remove();
-      this.entities.openEntityForm(entity, undefined, {}, async (record) => {
-        if (relationshipId) await this.gateway.updateRecord(entity, record.id, { attachedRelationshipIds: [relationshipId] });
-        if (relatedKey) { const ref = parseEntityKey(relatedKey); await this.gateway.upsert({ sourceType: ref.entityType, sourceId: ref.entityId, targetType: entity, targetId: record.id, relationLabel: "связано" }); }
+      this.entities.openEntityForm(entity, undefined, {}, async (record, resultingEntity) => {
+        if (relationshipId) await this.gateway.updateRecord(resultingEntity, record.id, { attachedRelationshipIds: [relationshipId] });
+        if (relatedKey) { const ref = parseEntityKey(relatedKey); await this.gateway.upsert({ sourceType: ref.entityType, sourceId: ref.entityId, targetType: resultingEntity, targetId: record.id, relationLabel: "связано" }); }
         await this.host.reload();
-        await this.addNode(entity, record.id, position);
+        await this.addNode(resultingEntity, record.id, position);
       });
     });
   }

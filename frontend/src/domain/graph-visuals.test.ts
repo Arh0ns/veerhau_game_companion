@@ -12,6 +12,8 @@ describe("graphNodeVisual", () => {
     expect(graphNodeVisual("events", "obsidian").shape).toBe("hexagon");
     expect(graphNodeVisual("facts", "obsidian").shape).toBe("square");
     expect(graphNodeVisual("theories", "obsidian").shape).toBe("triangle");
+    expect(graphNodeVisual("clues", "obsidian").shape).toBe("diamond");
+    expect(graphNodeVisual("artifacts", "obsidian")).toEqual(graphNodeVisual("clues", "obsidian"));
     expect(graphNodeVisual("locations", "obsidian").shape).toBe("star");
     expect(graphNodeVisual("locations", "obsidian").radius).toBeLessThan(graphNodeVisual("characters", "obsidian").radius);
     expect(graphNodeVisual("locations", "obsidian", 1, "city").radius).toBeGreaterThan(graphNodeVisual("characters", "obsidian").radius);

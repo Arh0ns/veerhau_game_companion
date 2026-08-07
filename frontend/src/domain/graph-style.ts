@@ -43,6 +43,7 @@ const ENTITY_COLORS: Partial<Record<EntityType, string>> = {
   theories: "#86558f",
   locations: "#aeb6c2",
   clues: "#9b7b35",
+  artifacts: "#aeb6c2",
 };
 
 export const CITY_SECT_BORDER_COLORS: Readonly<Record<string, string>> = {
@@ -76,6 +77,8 @@ export interface ResolvedGraphNodeStyle {
   color: string;
   textColor: string;
   borderColor: string;
+  borderStyle: "solid" | "dashed" | "dotted";
+  borderWidth: number;
   fontFamily: string;
   labelSize: number;
   labelWeight: number;
@@ -123,6 +126,8 @@ export class GraphStyleResolver {
       color,
       textColor: placement.textColor || resolvedTypeStyle.textColor || "#f4f4f2",
       borderColor: placement.borderColor || citySectBorderColor || importanceStyle.borderColor || resolvedTypeStyle.borderColor || (entity === "coteries" ? "#c8a85a" : "#7d6a47"),
+      borderStyle: placement.borderStyle || importanceStyle.borderStyle || resolvedTypeStyle.borderStyle || "solid",
+      borderWidth: placement.borderWidth || importanceStyle.borderWidth || resolvedTypeStyle.borderWidth || 1.5,
       fontFamily: resolvedTypeStyle.fontFamily || modeStyle.fontFamily,
       labelSize: resolvedTypeStyle.labelSize || modeStyle.labelSize,
       labelWeight: resolvedTypeStyle.labelWeight || modeStyle.labelWeight,

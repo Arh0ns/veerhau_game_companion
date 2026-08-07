@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from chronicle.domain.models import (
+    Artifact,
     ChronicleEntity,
     Character,
     EntityRef,
@@ -36,6 +37,7 @@ GRAPH_ENTITY_TYPES = {
     EntityType.EVENTS,
     EntityType.FACTS,
     EntityType.CLUES,
+    EntityType.ARTIFACTS,
     EntityType.STORYLINES,
     EntityType.THEORIES,
     EntityType.NOTES,
@@ -50,6 +52,7 @@ ID_PREFIXES: dict[EntityType, str] = {
     EntityType.EVENTS: "evt",
     EntityType.FACTS: "fact",
     EntityType.CLUES: "clue",
+    EntityType.ARTIFACTS: "artifact",
     EntityType.STORYLINES: "story",
     EntityType.THEORIES: "theory",
     EntityType.NOTES: "note",
@@ -146,6 +149,7 @@ STRUCTURED_TAG_FIELDS: dict[EntityType, tuple[str, ...]] = {
     EntityType.EVENTS: ("cityId", "placeId", "importance", "contentType"),
     EntityType.FACTS: ("reliability", "eventId", "importance", "contentType"),
     EntityType.CLUES: ("reliability", "eventId", "discoveredByIds", "importance"),
+    EntityType.ARTIFACTS: ("ownerId", "importance"),
     EntityType.STORYLINES: ("status", "importance"),
     EntityType.THEORIES: ("authorId", "status", "importance"),
     EntityType.NOTES: ("authorId", "importance"),
@@ -267,6 +271,9 @@ class RecordService:
 
     @staticmethod
     def _validate(entity: ChronicleEntity) -> None:
+        if isinstance(entity, Artifact):
+            if not entity.owner_id:
+                raise ValidationError("Для артефакта выберите персонажа-владельца.")
         if isinstance(entity, InvestigationBoard):
             keys = [item.entity.key for item in entity.items]
             if len(keys) != len(set(keys)):
@@ -296,6 +303,11 @@ class RecordService:
 
     @staticmethod
     def _validate_references(entity: ChronicleEntity, uow: UnitOfWork) -> None:
+        if isinstance(entity, Artifact):
+            owner = uow.records.find(EntityRef(EntityType.CHARACTERS, entity.owner_id))
+            if not isinstance(owner, Character):
+                raise ValidationError("Владельцем артефакта может быть только существующий персонаж.")
+            return
         if not isinstance(entity, Faction) or not entity.is_secondary:
             return
         if not entity.main_faction_id:
